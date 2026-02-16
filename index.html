@@ -2,15 +2,8 @@
 <html lang="id">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>PT KARSA SENTANA - LogiSystem</title>
-    
-    <!-- PWA Meta Tags -->
-    <meta name="apple-mobile-web-app-capable" content="yes">
-    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-    <meta name="mobile-web-app-capable" content="yes">
-    <meta name="theme-color" content="#121212">
-    <meta name="application-name" content="LogiSystem">
     
     <!-- React & ReactDOM -->
     <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
@@ -30,7 +23,6 @@
             margin: 0;
             padding: 0;
             -webkit-tap-highlight-color: transparent;
-            overscroll-behavior-y: none;
         }
         
         /* Mobile Scrollbar Hide */
@@ -77,7 +69,7 @@
             <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className} {...props}>{children}</svg>
         );
 
-        // Define icons manually to ensure stability without external CDN dependencies
+        // Manual Icon Definitions to avoid CDN issues
         const LayoutDashboard = (props) => <Icon {...props}><rect width="7" height="9" x="3" y="3" rx="1"/><rect width="7" height="5" x="14" y="3" rx="1"/><rect width="7" height="9" x="14" y="12" rx="1"/><rect width="7" height="5" x="3" y="16" rx="1"/></Icon>;
         const Package = (props) => <Icon {...props}><path d="m7.5 4.27 9 5.15"/><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/><path d="m3.3 7 8.7 5 8.7-5"/><path d="M12 22v-9"/></Icon>;
         const ShoppingCart = (props) => <Icon {...props}><circle cx="8" cy="21" r="1"/><circle cx="19" cy="21" r="1"/><path d="M2.05 2.05h2l2.66 12.42a2 2 0 0 0 2 1.58h9.78a2 2 0 0 0 1.95-1.57l1.65-7.43H5.12"/></Icon>;
@@ -573,12 +565,9 @@
                 );
             };
 
-            const renderTransaksiView = () => {
+            const renderTransaksiHarianView = () => {
                 const currentPlan = plans[selectedInstansi] || {};
-                // Filter: If type 'Keluar', only show planned items. If 'Masuk', show all.
-                const availableItemsForTransaction = txForm.type === 'Keluar' 
-                    ? inventory.filter(item => (currentPlan[item.id] || 0) > 0)
-                    : inventory;
+                const availableItemsForTransaction = inventory.filter(item => { const plannedQty = currentPlan[item.id] || 0; return plannedQty > 0; });
                 
                 const filteredTransactions = transactions; 
                 const printTx = () => {
