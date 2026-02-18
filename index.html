@@ -1,789 +1,680 @@
-<!DOCTYPE html>
-<html lang="id">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-    <title>PT KARSA SENTANA - LogiSystem</title>
-    
-    <!-- PWA Meta Tags -->
-    <meta name="apple-mobile-web-app-capable" content="yes">
-    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-    <meta name="mobile-web-app-capable" content="yes">
-    <meta name="theme-color" content="#121212">
-    
-    <!-- React & ReactDOM -->
-    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-    
-    <!-- Babel -->
-    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-    
-    <!-- Tailwind CSS -->
-    <script src="https://cdn.tailwindcss.com"></script>
-    
-    <style>
-        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;900&display=swap');
-        body { 
-            font-family: 'Inter', sans-serif; 
-            background-color: #121212; 
-            margin: 0;
-            padding: 0;
-            -webkit-tap-highlight-color: transparent;
-            overscroll-behavior-y: none;
-        }
-        
-        /* Mobile Scrollbar Hide */
-        @media (max-width: 768px) {
-            ::-webkit-scrollbar { width: 0px; background: transparent; }
-        }
+import React, { useState, useEffect, useRef } from 'react';
+import { 
+  Camera, MapPin, User, LogOut, FileText, 
+  Users, Bell, Calendar, CheckCircle, XCircle, 
+  Menu, Download, Upload, Clock, Home, AlertCircle, Coffee 
+} from 'lucide-react';
 
-        /* Desktop Scrollbar */
-        @media (min-width: 769px) {
-            ::-webkit-scrollbar { width: 8px; height: 8px; }
-            ::-webkit-scrollbar-track { background: #1e1e1e; }
-            ::-webkit-scrollbar-thumb { background: #333; border-radius: 4px; }
-            ::-webkit-scrollbar-thumb:hover { background: #444; }
-        }
+/**
+ * MOCK DATA & CONFIGURATION
+ * Data awal untuk simulasi sistem
+ */
+const INITIAL_USERS = [
+  { id: 1, name: 'Super Admin', email: 'admin@kantor.com', role: 'admin', password: 'admin', department: 'HRD', phone: '08123456789' },
+  { id: 2, name: 'Budi Santoso', email: 'budi@kantor.com', role: 'employee', password: 'user', department: 'IT', phone: '08198765432' },
+  { id: 3, name: 'Siti Aminah', email: 'siti@kantor.com', role: 'employee', password: 'user', department: 'Finance', phone: '08122334455' },
+];
 
-        /* Print Styles */
-        @media print {
-          @page { margin: 0.5cm; size: auto; }
-          body { background-color: white !important; -webkit-print-color-adjust: exact; overflow: visible !important; height: auto !important; }
-          aside, header, .no-print, .scrollbar-hide::-webkit-scrollbar { display: none !important; }
-          main { margin: 0 !important; padding: 0 !important; overflow: visible !important; height: auto !important; }
-          .animate-fade-in { animation: none !important; }
-          .print-none-container { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: white; z-index: 9999; display: block; }
-          #printable-area { display: block !important; padding: 0; }
-          
-          .bg-\[\#121212\], .bg-\[\#1e1e1e\], .bg-\[\#2a2a2a\] { background-color: white !important; color: black !important; }
-          .text-white, .text-gray-300, .text-gray-400, .text-gray-500 { color: black !important; }
-          .text-blue-400, .text-blue-500, .text-orange-400, .text-green-400 { color: black !important; }
-          .border-gray-800, .border-gray-700 { border-color: #000 !important; }
+const INITIAL_ANNOUNCEMENTS = [
+  { id: 1, title: 'Libur Nasional', content: 'Hari Jumat kantor libur memperingati hari besar.', date: '2023-10-20' },
+  { id: 2, title: 'Rapat Bulanan', content: 'Evaluasi kinerja dilakukan hari Senin pukul 09:00.', date: '2023-10-22' },
+];
 
-          table { width: 100% !important; font-size: 10pt; }
-          td, th { padding: 4px !important; }
-        }
-    </style>
-</head>
-<body>
-    <div id="root"></div>
+const INITIAL_LOGS = [
+  { id: 101, userId: 2, name: 'Budi Santoso', type: 'Masuk', timestamp: new Date(Date.now() - 86400000).toISOString(), location: '-6.2088, 106.8456', photo: null, status: 'On Time' },
+  { id: 102, userId: 3, name: 'Siti Aminah', type: 'Masuk', timestamp: new Date(Date.now() - 86000000).toISOString(), location: '-6.2088, 106.8456', photo: null, status: 'On Time' },
+];
 
-    <script type="text/babel">
-        const { useState, useEffect, useRef } = React;
+// Komponen Format Tanggal Indonesia
+const formatDate = (dateString) => {
+  const options = { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' };
+  return new Date(dateString).toLocaleDateString('id-ID', options);
+};
 
-        // --- ICONS DEFINITION ---
-        // Defined manually to ensure stability without external CDN dependencies causing conflicts
-        const Icon = ({ size = 24, className, children, ...props }) => (
-            <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className} {...props}>{children}</svg>
-        );
+// --- KOMPONEN UI DASAR ---
 
-        const LayoutDashboard = (props) => <Icon {...props}><rect width="7" height="9" x="3" y="3" rx="1"/><rect width="7" height="5" x="14" y="3" rx="1"/><rect width="7" height="9" x="14" y="12" rx="1"/><rect width="7" height="5" x="3" y="16" rx="1"/></Icon>;
-        const Package = (props) => <Icon {...props}><path d="m7.5 4.27 9 5.15"/><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/><path d="m3.3 7 8.7 5 8.7-5"/><path d="M12 22v-9"/></Icon>;
-        const ShoppingCart = (props) => <Icon {...props}><circle cx="8" cy="21" r="1"/><circle cx="19" cy="21" r="1"/><path d="M2.05 2.05h2l2.66 12.42a2 2 0 0 0 2 1.58h9.78a2 2 0 0 0 1.95-1.57l1.65-7.43H5.12"/></Icon>;
-        const FileText = (props) => <Icon {...props}><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/><line x1="16" x2="8" y1="13" y2="13"/><line x1="16" x2="8" y1="17" y2="17"/><line x1="10" x2="8" y1="9" y2="9"/></Icon>;
-        const Users = (props) => <Icon {...props}><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></Icon>;
-        const History = (props) => <Icon {...props}><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l4 2"/></Icon>;
-        const LogOut = (props) => <Icon {...props}><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" x2="9" y1="12" y2="12"/></Icon>;
-        const Search = (props) => <Icon {...props}><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></Icon>;
-        const Plus = (props) => <Icon {...props}><path d="M5 12h14"/><path d="M12 5v14"/></Icon>;
-        const Minus = (props) => <Icon {...props}><path d="M5 12h14"/></Icon>;
-        const Wallet = (props) => <Icon {...props}><path d="M21 12V7H5a2 2 0 0 1 0-4h14v4"/><path d="M3 5v14a2 2 0 0 0 2 2h16v-5"/><path d="M18 12a2 2 0 0 0 0 4h4v-4Z"/></Icon>;
-        const Calendar = (props) => <Icon {...props}><rect width="18" height="18" x="3" y="4" rx="2" ry="2"/><line x1="16" x2="16" y1="2" y2="6"/><line x1="8" x2="8" y1="2" y2="6"/><line x1="3" x2="21" y1="10" y2="10"/></Icon>;
-        const FileBarChart = (props) => <Icon {...props}><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/><path d="M12 18v-6"/><path d="M8 18v-1"/><path d="M16 18v-3"/></Icon>;
-        const ChevronDown = (props) => <Icon {...props}><path d="m6 9 6 6 6-6"/></Icon>;
-        const Edit = (props) => <Icon {...props}><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></Icon>;
-        const Trash2 = (props) => <Icon {...props}><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/><line x1="10" x2="10" y1="11" y2="17"/><line x1="14" x2="14" y1="11" y2="17"/></Icon>;
-        const Tag = (props) => <Icon {...props}><path d="M12 2H2v10l9.29 9.29c.94.94 2.48.94 3.42 0l6.58-6.58c.94-.94 .94-2.48 0-3.42L12 2Z"/><circle cx="7" cy="7" r="1"/></Icon>;
-        const Check = (props) => <Icon {...props}><polyline points="20 6 9 17 4 12"/></Icon>;
-        const ArrowUpRight = (props) => <Icon {...props}><path d="M7 7h10v10"/><path d="M7 17 17 7"/></Icon>;
-        const ArrowDownLeft = (props) => <Icon {...props}><path d="M17 7 7 17"/><path d="M17 17H7V7"/></Icon>;
-        const Printer = (props) => <Icon {...props}><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect width="12" height="8" x="6" y="14"/></Icon>;
-        const Save = (props) => <Icon {...props}><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></Icon>;
-        const X = (props) => <Icon {...props}><path d="M18 6 6 18"/><path d="m6 6 12 12"/></Icon>;
-        const AlertCircle = (props) => <Icon {...props}><circle cx="12" cy="12" r="10"/><line x1="12" x2="12" y1="8" y2="12"/><line x1="12" x2="12.01" y1="16" y2="16"/></Icon>;
-        const Truck = (props) => <Icon {...props}><path d="M5 18H3c-.6 0-1-.4-1-1V7c0-.6.4-1 1-1h10c.6 0 1 .4 1 1v11"/><path d="M14 9h4l4 4.5V17c0 .6-.4 1-1 1h-1"/><circle cx="7" cy="18" r="2"/><circle cx="17" cy="18" r="2"/></Icon>;
-        const Send = (props) => <Icon {...props}><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></Icon>;
-        const Settings = (props) => <Icon {...props}><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.1a2 2 0 0 1-1-1.74v-.47a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></Icon>;
-        const Lock = (props) => <Icon {...props}><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></Icon>;
-        const FileSpreadsheet = (props) => <Icon {...props}><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/><path d="M8 13h2"/><path d="M8 17h2"/><path d="M14 13h2"/><path d="M14 17h2"/></Icon>;
-        const ArrowRightLeft = (props) => <Icon {...props}><path d="m16 3 4 4-4 4"/><path d="M20 7H4"/><path d="m8 21-4-4 4-4"/><path d="M4 17h16"/></Icon>;
-        const PieChart = (props) => <Icon {...props}><path d="M21.21 15.89A10 10 0 1 1 8 2.83"/><path d="M22 12A10 10 0 0 0 12 2v10z"/></Icon>;
-        const ShieldCheck = (props) => <Icon {...props}><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="m9 12 2 2 4-4"/></Icon>;
-        const Box = (props) => <Icon {...props}><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" x2="12" y1="22.08" y2="12"/></Icon>;
-        const TrendingUp = (props) => <Icon {...props}><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></Icon>;
-        const CreditCard = (props) => <Icon {...props}><rect width="20" height="14" x="2" y="5" rx="2"/><line x1="2" x2="22" y1="10" y2="10"/></Icon>;
-        const UserCircle = (props) => <Icon {...props}><circle cx="12" cy="12" r="10"/><circle cx="12" cy="10" r="3"/><path d="M7 20.662V19a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v1.662"/></Icon>;
-        const LayoutGrid = (props) => <Icon {...props}><rect width="7" height="7" x="3" y="3" rx="1"/><rect width="7" height="7" x="14" y="3" rx="1"/><rect width="7" height="7" x="14" y="14" rx="1"/><rect width="7" height="7" x="3" y="14" rx="1"/></Icon>;
-        const List = (props) => <Icon {...props}><line x1="8" x2="21" y1="6" y2="6"/><line x1="8" x2="21" y1="12" y2="12"/><line x1="8" x2="21" y1="18" y2="18"/><line x1="3" x2="3.01" y1="6" y2="6"/><line x1="3" x2="3.01" y1="12" y2="12"/><line x1="3" x2="3.01" y1="18" y2="18"/></Icon>;
-        const Eye = (props) => <Icon {...props}><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></Icon>;
-        const Globe = (props) => <Icon {...props}><circle cx="12" cy="12" r="10"/><line x1="2" x2="22" y1="12" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></Icon>;
-        const Facebook = (props) => <Icon {...props}><path d="M18 2h-3a5 5 0 0 0-5 5v3H7v4h3v8h4v-8h3l1-4h-4V7a1 1 0 0 1 1-1h3z"/></Icon>;
-        const Instagram = (props) => <Icon {...props}><rect width="20" height="20" x="2" y="2" rx="5" ry="5"/><path d="M16 11.37A4 4 0 1 1 12.63 8 4 4 0 0 1 16 11.37z"/><line x1="17.5" x2="17.51" y1="6.5" y2="6.5"/></Icon>;
-        const ClipboardList = (props) => <Icon {...props}><rect width="8" height="4" x="8" y="2" rx="1" ry="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><path d="M12 11h4"/><path d="M12 16h4"/><path d="M8 11h.01"/><path d="M8 16h.01"/></Icon>;
-        const Menu = (props) => <Icon {...props}><line x1="4" x2="20" y1="12" y2="12"/><line x1="4" x2="20" y1="6" y2="6"/><line x1="4" x2="20" y1="18" y2="18"/></Icon>;
+const Button = ({ children, onClick, variant = 'primary', className = '', disabled = false, icon: Icon }) => {
+  const baseStyle = "px-4 py-2 rounded-lg font-medium transition duration-200 flex items-center justify-center gap-2";
+  const variants = {
+    primary: "bg-blue-600 text-white hover:bg-blue-700 disabled:bg-blue-300",
+    secondary: "bg-gray-100 text-gray-700 hover:bg-gray-200",
+    danger: "bg-red-500 text-white hover:bg-red-600",
+    success: "bg-green-600 text-white hover:bg-green-700",
+    warning: "bg-yellow-500 text-white hover:bg-yellow-600",
+    outline: "border border-gray-300 text-gray-700 hover:bg-gray-50"
+  };
 
-        // --- KONFIGURASI PERUSAHAAN ---
-        const COMPANY_NAME = "PT. KARSA SENTANA LUMBUNG SENTOSA";
-        const COMPANY_ADDRESS = "Jalan Galaxy Raya No. 45, Palangka Raya, Kalimantan Tengah";
-        const COMPANY_CONTACT = "Telp: (0536) 3221234 | Email: admin@karsasentana.co.id";
+  return (
+    <button 
+      onClick={onClick} 
+      disabled={disabled}
+      className={`${baseStyle} ${variants[variant]} ${className}`}
+    >
+      {Icon && <Icon size={18} />}
+      {children}
+    </button>
+  );
+};
 
-        // --- DATA AKUN ---
-        const ACCOUNTS = {
-            admin: { username: 'admin', password: 'Karsa123', role: 'admin', name: 'Administrator Logistik' },
-            user: { username: 'user', password: 'KARSASENTANA', role: 'viewer', name: 'Staff Gudang' }
-        };
+const Card = ({ children, className = '' }) => (
+  <div className={`bg-white rounded-xl shadow-sm border border-gray-100 p-4 ${className}`}>
+    {children}
+  </div>
+);
 
-        // --- DATA AWAL LENGKAP ---
-        const initialInventoryData = [
-            { id: 1, name: 'Sapu Ijuk', brand: 'Nagata', price: 25000, category: 'Alat Kebersihan', stock: 100, image: '🧹' },
-            { id: 2, name: 'Sapu Lidi', brand: 'Lokal', price: 10000, category: 'Alat Kebersihan', stock: 100, image: '🧹' },
-            { id: 3, name: 'Sapu Plastik', brand: 'Lion Star', price: 20000, category: 'Alat Kebersihan', stock: 100, image: '🧹' },
-            { id: 4, name: 'Pengki / Serokan', brand: 'Lion Star', price: 15000, category: 'Alat Kebersihan', stock: 100, image: '🗑️' },
-            { id: 5, name: 'Kain Pel Lantai', brand: 'Microfiber', price: 35000, category: 'Alat Kebersihan', stock: 100, image: '🧽' },
-            { id: 6, name: 'Tongkat Pel (Mop)', brand: 'Bolde', price: 55000, category: 'Alat Kebersihan', stock: 100, image: '🧹' },
-            { id: 7, name: 'Ember Pel', brand: 'Lion Star', price: 45000, category: 'Alat Kebersihan', stock: 100, image: '🪣' },
-            { id: 8, name: 'Sikat Lantai', brand: 'Bagus', price: 15000, category: 'Alat Kebersihan', stock: 100, image: '🪥' },
-            { id: 9, name: 'Sikat Kamar Mandi / WC', brand: 'Bagus', price: 18000, category: 'Alat Kebersihan', stock: 100, image: '🪥' },
-            { id: 10, name: 'Sikat Kloset', brand: 'Bagus', price: 20000, category: 'Alat Kebersihan', stock: 100, image: '🚽' },
-            { id: 11, name: 'Sikat Tangan', brand: 'Nagata', price: 10000, category: 'Alat Kebersihan', stock: 100, image: '✋' },
-            { id: 12, name: 'Lap Microfiber', brand: '3M', price: 25000, category: 'Alat Kebersihan', stock: 100, image: '🧽' },
-            { id: 13, name: 'Kanebo', brand: 'Aion', price: 35000, category: 'Alat Kebersihan', stock: 100, image: '🧽' },
-            { id: 14, name: 'Spons Cuci', brand: 'Scotch-Brite', price: 5000, category: 'Alat Kebersihan', stock: 100, image: '🧽' },
-            { id: 15, name: 'Wiper Kaca', brand: 'Lion Star', price: 25000, category: 'Alat Kebersihan', stock: 100, image: '🪟' },
-            { id: 16, name: 'Tempat Sampah', brand: 'Krisbow', price: 150000, category: 'Alat Kebersihan', stock: 100, image: '🗑️' },
-            { id: 17, name: 'Kantong Plastik Sampah', brand: 'Klin Pak', price: 20000, category: 'Alat Kebersihan', stock: 100, image: '⚫' },
-            { id: 30, name: 'Cairan Pembersih Lantai', brand: 'So Klin', price: 15000, category: 'Bahan Pembersih', stock: 100, image: '✨' },
-            { id: 31, name: 'Cairan Pembersih Kaca', brand: 'Cling', price: 12000, category: 'Bahan Pembersih', stock: 100, image: '🪟' },
-            { id: 32, name: 'Cairan Pembersih WC', brand: 'Vixal', price: 18000, category: 'Bahan Pembersih', stock: 100, image: '🚽' },
-            { id: 33, name: 'Cairan Pembersih K.Mandi', brand: 'Porstex', price: 20000, category: 'Bahan Pembersih', stock: 100, image: '🚿' },
-            { id: 34, name: 'Sabun Cair Serbaguna', brand: 'Sunlight', price: 15000, category: 'Bahan Pembersih', stock: 100, image: '🧼' },
-            { id: 50, name: 'Mesin Potong Rumput', brand: 'Honda', price: 2500000, category: 'Taman', stock: 100, image: '🌱' },
-            { id: 51, name: 'Gunting Rumput', brand: 'Kenmaster', price: 75000, category: 'Taman', stock: 100, image: '✂️' },
-            { id: 52, name: 'Parang / Sabit', brand: 'Lokal', price: 45000, category: 'Taman', stock: 100, image: '🗡️' },
-            { id: 53, name: 'Alat Semprot (Sprayer)', brand: 'Kyokan', price: 55000, category: 'Taman', stock: 100, image: '🚿' },
-            { id: 70, name: 'Sarung Tangan Karet', brand: 'Sensi', price: 15000, category: 'K3', stock: 100, image: '🧤' },
-            { id: 71, name: 'Masker', brand: 'Sensi', price: 35000, category: 'K3', stock: 100, image: '😷' },
-            { id: 72, name: 'Sepatu Boot Karet', brand: 'Ap Boots', price: 120000, category: 'K3', stock: 100, image: '👢' },
-            { id: 73, name: 'Apron Kerja', brand: 'Lokal', price: 45000, category: 'K3', stock: 100, image: '🎽' },
-            { id: 80, name: 'Air Mineral Galon', brand: 'Aqua', price: 20000, category: 'Konsumsi', stock: 100, image: '💧' },
-            { id: 81, name: 'Air Mineral Botol', brand: 'Le Minerale', price: 45000, category: 'Konsumsi', stock: 100, image: '🍾' },
-            { id: 82, name: 'Kopi Sachet', brand: 'Kapal Api', price: 15000, category: 'Konsumsi', stock: 100, image: '☕' },
-            { id: 83, name: 'Teh Celup', brand: 'Sariwangi', price: 10000, category: 'Konsumsi', stock: 100, image: '🍵' },
-            { id: 90, name: 'Kertas HVS A4', brand: 'PaperOne', price: 45000, category: 'ATK', stock: 100, image: '📄' },
-            { id: 91, name: 'Kertas HVS F4', brand: 'PaperOne', price: 50000, category: 'ATK', stock: 100, image: '📄' },
-            { id: 92, name: 'Map Plastik', brand: 'Dia', price: 3000, category: 'ATK', stock: 100, image: '📂' },
-            { id: 93, name: 'Map Kertas', brand: 'Diamond', price: 2000, category: 'ATK', stock: 100, image: '📁' },
-            { id: 94, name: 'Ordner / Binder', brand: 'Bantex', price: 35000, category: 'ATK', stock: 100, image: '📒' },
-            { id: 110, name: 'Printer', brand: 'Epson L3210', price: 2500000, category: 'Perlengkapan Kantor', stock: 100, image: '🖨️' },
-            { id: 111, name: 'Tinta / Toner', brand: 'Epson 003', price: 85000, category: 'Perlengkapan Kantor', stock: 100, image: '⚫' },
-            { id: 112, name: 'Mesin Fotokopi', brand: 'Canon', price: 15000000, category: 'Perlengkapan Kantor', stock: 100, image: '📠' },
-        ];
+const Badge = ({ children, type = 'info' }) => {
+  const styles = {
+    info: 'bg-blue-100 text-blue-800',
+    success: 'bg-green-100 text-green-800',
+    warning: 'bg-yellow-100 text-yellow-800',
+    danger: 'bg-red-100 text-red-800',
+  };
+  return (
+    <span className={`px-2 py-1 rounded-full text-xs font-semibold ${styles[type] || styles.info}`}>
+      {children}
+    </span>
+  );
+};
 
-        const INITIAL_INSTANSI_LIST = ['DINSOS', 'DISNAKER', 'PUPR', 'DP3AP2KB', 'DISDUKCAPIL'];
-        const initialTransactions = [{ id: 101, date: '2023-11-01', type: 'Masuk', itemId: 1, qty: 100, source: 'Vendor ATK', price: 25000 }];
+// --- HALAMAN UTAMA ---
 
-        // --- SUB-COMPONENTS ---
-        const SidebarItem = ({ icon: Icon, label, active, onClick }) => (
-            <button onClick={onClick} className={`w-full flex items-center gap-3.5 px-4 py-3.5 rounded-xl transition-all duration-300 group mb-1 ${active ? 'bg-gradient-to-r from-blue-600/90 to-purple-600/90 text-white shadow-lg shadow-blue-900/30 border border-blue-500/20 translate-x-1' : 'text-gray-400 hover:text-white hover:bg-white/5 hover:translate-x-1'}`}>
-                <Icon size={20} className={`transition-colors ${active ? 'text-white' : 'text-gray-500 group-hover:text-blue-400'}`} />
-                <span className={`font-medium text-sm tracking-wide ${active ? 'font-bold' : ''}`}>{label}</span>
-                {active && <div className="ml-auto w-1.5 h-1.5 rounded-full bg-white animate-pulse"></div>}
-            </button>
-        );
+export default function App() {
+  const [currentUser, setCurrentUser] = useState(null);
+  const [users, setUsers] = useState(INITIAL_USERS);
+  const [logs, setLogs] = useState(INITIAL_LOGS);
+  const [announcements, setAnnouncements] = useState(INITIAL_ANNOUNCEMENTS);
+  
+  // State Login
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [loginError, setLoginError] = useState('');
 
-        const ReportPreviewModal = ({ title, dateRange, onClose, onPrint, content, userName }) => (
-            <div className="fixed inset-0 z-[100] bg-black/80 flex justify-center items-center p-4 print-none-container">
-                <div className="bg-white text-black w-full max-w-4xl h-[95vh] overflow-y-auto rounded-lg shadow-xl relative flex flex-col">
-                <div className="sticky top-0 bg-slate-100 p-4 border-b border-gray-300 flex justify-between items-center no-print z-10">
-                    <div className="flex items-center gap-2"><FileText size={20} className="text-blue-600"/><h3 className="font-bold text-lg text-slate-800">Pratinjau Cetak</h3></div>
-                    <div className="flex gap-2"><button onClick={onPrint} className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md font-bold flex items-center gap-2"><Printer size={16} /> Cetak</button><button onClick={onClose} className="bg-gray-300 hover:bg-gray-400 text-gray-800 px-4 py-2 rounded-md font-bold">Tutup</button></div>
-                </div>
-                <div id="printable-area" className="p-8 bg-white min-h-screen relative flex flex-col justify-between">
-                    <div>
-                        <div className="flex w-full h-32 mb-8 font-sans border-b-2 border-yellow-600/50 pb-2">
-                            <div className="w-[35%] bg-[#222] text-white flex items-center p-4 relative" style={{ clipPath: 'polygon(0 0, 100% 0, 90% 100%, 0% 100%)' }}>
-                                <div className="flex items-center gap-3 z-10">
-                                    <div className="w-16 h-16 bg-white rounded-full flex flex-col items-center justify-center text-black font-black leading-none border-2 border-gray-300">
-                                        <span className="text-sm">PT.</span><span className="text-lg">KSLS</span>
-                                    </div>
-                                    <div className="text-xs font-bold leading-tight text-yellow-500 tracking-wider">PT. KARSA<br/>SENTANA<br/>LUMBUNG<br/>SENTOSA</div>
-                                </div>
-                                <div className="absolute top-0 right-0 h-4 w-20 bg-red-600"></div>
-                            </div>
-                            <div className="w-[65%] pl-4 flex flex-col justify-center items-end text-right text-[9px] leading-relaxed">
-                                <p><span className="font-bold">Office I :</span> Jl. Kawitan II, Kel. Sidorejo, Kec. Arut Selatan<br/>Kab. Kotawaringin Barat, Kalimantan Tengah.</p>
-                                <p className="mt-1"><span className="font-bold">Office II :</span> Jl. Palam Raya, Ruko Gria Mawar Asri, Kel. Guntung Manggis<br/>Kec. Landasan Ulin, Kota Banjarbaru, Kalimantan Selatan.</p>
-                                <p className="font-bold mt-1 text-black">Telp/WA : 0821 5050 9000 / 0815 4508 0207</p>
-                            </div>
-                        </div>
-                        <div className="text-center mb-6"><h2 className="text-xl font-bold uppercase underline decoration-2 underline-offset-4 mb-1">{title}</h2>{dateRange && <p className="text-sm italic text-gray-600">Periode: {dateRange}</p>}</div>
-                        <div className="mb-8 text-sm">{content}</div>
-                    </div>
-                    <div>
-                        <div className="flex justify-end mt-8 pr-10 break-inside-avoid">
-                            <div className="text-center"><p className="mb-1">Palangka Raya, {new Date().toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })}</p><p className="mb-20 font-bold">Direktur Operasional</p><p className="font-bold border-b border-black inline-block min-w-[200px]">Marlianto</p></div>
-                        </div>
-                        <div className="mt-10 bg-[#222] text-white p-3 text-[10px] flex justify-between items-center relative overflow-hidden">
-                            <div className="flex gap-4 z-10"><div className="flex items-center gap-1"><Globe size={10} className="text-yellow-500" /> www.karsasentanalumbungsentosa.com</div><div className="flex items-center gap-1"><Facebook size={10} className="text-yellow-500" /> karsasentanalumbungsentosa</div><div className="flex items-center gap-1"><Users size={10} className="text-yellow-500" /> pt.ksls</div></div>
-                            <div className="absolute bottom-0 left-0 h-1 w-full bg-red-600"></div>
-                        </div>
-                    </div>
-                </div>
-                </div>
+  // Navigasi Sederhana
+  const [activeTab, setActiveTab] = useState('dashboard');
+
+  const handleLogin = (e) => {
+    e.preventDefault();
+    const user = users.find(u => u.email === email && u.password === password);
+    if (user) {
+      setCurrentUser(user);
+      setLoginError('');
+      setActiveTab('dashboard');
+    } else {
+      setLoginError('Email atau password salah!');
+    }
+  };
+
+  const handleLogout = () => {
+    setCurrentUser(null);
+    setEmail('');
+    setPassword('');
+    setActiveTab('dashboard');
+  };
+
+  if (!currentUser) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
+        <div className="max-w-md w-full bg-white rounded-2xl shadow-xl overflow-hidden">
+          <div className="bg-blue-600 p-8 text-center">
+            <div className="w-16 h-16 bg-white/20 rounded-full flex items-center justify-center mx-auto mb-4 backdrop-blur-sm">
+              <CheckCircle size={32} className="text-white" />
             </div>
-        );
-
-        // --- MAIN APP COMPONENT ---
-        function App() {
-            // States
-            const [currentUser, setCurrentUser] = useState(null);
-            const [loginForm, setLoginForm] = useState({ username: '', password: '' });
-            const [loginError, setLoginError] = useState('');
-            const [activeMenu, setActiveMenu] = useState('Dashboard');
-            const [instansiList, setInstansiList] = useState(INITIAL_INSTANSI_LIST);
-            const [budgets, setBudgets] = useState(() => {
-                const initial = {};
-                INITIAL_INSTANSI_LIST.forEach(inst => initial[inst] = 5000000); 
-                return initial;
-            });
-            const [selectedInstansi, setSelectedInstansi] = useState('DINSOS');
-            const [isInstansiMenuOpen, setIsInstansiMenuOpen] = useState(false);
-            const [searchTerm, setSearchTerm] = useState('');
-            const [inventory, setInventory] = useState(initialInventoryData);
-            const [transactions, setTransactions] = useState(initialTransactions);
-            const [categories, setCategories] = useState([...new Set(initialInventoryData.map(i => i.category))]);
-            const [editingItem, setEditingItem] = useState(null);
-            const [isAddingNew, setIsAddingNew] = useState(false);
-            const [plans, setPlans] = useState(() => {
-                const initialPlans = {};
-                INITIAL_INSTANSI_LIST.forEach(inst => initialPlans[inst] = {});
-                return initialPlans;
-            });
-            const [customPrices, setCustomPrices] = useState({});
-            const [isAdminAuthenticated, setIsAdminAuthenticated] = useState(false);
-            const [showAdminLogin, setShowAdminLogin] = useState(false);
-            const [passwordInput, setPasswordInput] = useState('');
-            const [previewData, setPreviewData] = useState(null);
-            const [newInstansi, setNewInstansi] = useState('');
-            const [txForm, setTxForm] = useState({ type: 'Keluar', itemId: '', qty: 1, source: 'DINSOS', date: new Date().toISOString().split('T')[0] });
-            const [showManualPlanModal, setShowManualPlanModal] = useState(false);
-            const [manualPlanForm, setManualPlanForm] = useState({ mode: 'existing', itemId: '', isNewItem: false, name: '', brand: '', price: 0, qty: 1 });
-            const [isSidebarOpen, setIsSidebarOpen] = useState(false);
-
-            // Date States
-            const today = new Date();
-            const [belanjaStartDate, setBelanjaStartDate] = useState(new Date(today.getFullYear(), today.getMonth(), 1).toISOString().split('T')[0]);
-            const [belanjaEndDate, setBelanjaEndDate] = useState(today.toISOString().split('T')[0]);
-            const [laporanStartDate, setLaporanStartDate] = useState(new Date(today.getFullYear(), today.getMonth(), 1).toISOString().split('T')[0]);
-            const [laporanEndDate, setLaporanEndDate] = useState(today.toISOString().split('T')[0]);
-
-            const fileInputRef = useRef(null);
-            const stockFileInputRef = useRef(null);
-
-            useEffect(() => {
-                setTxForm(prev => ({ ...prev, source: selectedInstansi }));
-            }, [selectedInstansi]);
-
-            // Handlers
-            const handleLogin = (e) => {
-                e.preventDefault();
-                const { username, password } = loginForm;
-                const userAccount = Object.values(ACCOUNTS).find(acc => acc.username === username && acc.password === password);
-                if (userAccount) {
-                    setCurrentUser(userAccount);
-                    setLoginError('');
-                    setActiveMenu('Dashboard');
-                } else {
-                    setLoginError('Username atau Password salah!');
-                }
-            };
-            const handleLogout = () => { setCurrentUser(null); setLoginForm({ username: '', password: '' }); };
-            const isAdmin = currentUser?.role === 'admin';
+            <h1 className="text-2xl font-bold text-white">E-Absensi Pro</h1>
+            <p className="text-blue-100 text-sm">Sistem Absensi Terintegrasi GPS & Selfie</p>
+          </div>
+          
+          <form onSubmit={handleLogin} className="p-8 space-y-4">
+            {loginError && (
+              <div className="bg-red-50 text-red-600 p-3 rounded-lg text-sm flex items-center gap-2">
+                <AlertCircle size={16} /> {loginError}
+              </div>
+            )}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
+              <input 
+                type="email" 
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder="admin@kantor.com"
+                required
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Password</label>
+              <input 
+                type="password" 
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="*****"
+                required
+              />
+            </div>
+            <Button className="w-full mt-4">Masuk Sistem</Button>
             
-            // Helper Funcs
-            const formatNumber = (num) => (num === null || num === undefined) ? '' : num.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ".");
-            const parseNumber = (str) => parseInt(str.toString().replace(/[^0-9]/g, '') || '0', 10);
-            const getPrice = (id) => customPrices[id] !== undefined ? customPrices[id] : inventory.find(i => i.id === id)?.price || 0;
-            const getItemName = (id) => inventory.find(i => i.id === parseInt(id))?.name || 'Unknown Item';
-            const getBrandName = (id) => inventory.find(i => i.id === parseInt(id))?.brand || '-';
-            const formatRupiah = (num) => new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(num);
+            <div className="text-center text-xs text-gray-500 mt-4">
+              <p>Demo Admin: admin@kantor.com / admin</p>
+              <p>Demo User: budi@kantor.com / user</p>
+            </div>
+          </form>
+        </div>
+      </div>
+    );
+  }
 
-            const handleItemUpdate = (id, field, value) => { if (!isAdmin) return; setInventory(prev => prev.map(item => item.id === id ? { ...item, [field]: value } : item)); };
-            const handlePriceChange = (id, rawValue) => { if (!isAdmin) return; const numericValue = parseNumber(rawValue); if (!isNaN(numericValue)) setCustomPrices(prev => ({ ...prev, [id]: numericValue })); };
-            const handlePlanChange = (id, delta) => { if (!isAdmin) return; setPlans(prev => { const instansiPlan = prev[selectedInstansi] || {}; const currentQty = instansiPlan[id] || 0; const newQty = Math.max(0, currentQty + delta); return { ...prev, [selectedInstansi]: { ...instansiPlan, [id]: newQty } }; }); };
-            const handleEditClick = (item) => { if (!isAdmin) return; setEditingItem({ ...item }); setIsAddingNew(false); };
-            const handleAddClick = () => { setEditingItem({ id: Date.now(), name: '', brand: '', price: 0, stock: 0, category: categories[0], image: '📦' }); setIsAddingNew(true); };
-            const handleSaveEdit = (e) => { e.preventDefault(); if (!editingItem) return; if (!categories.includes(editingItem.category)) setCategories(prev => [...prev, editingItem.category]); if (isAddingNew) setInventory(prev => [...prev, editingItem]); else setInventory(prev => prev.map(item => item.id === editingItem.id ? { ...item, ...editingItem } : item)); setEditingItem(null); setIsAddingNew(false); };
-            const handleAdminLogin = (e) => { e.preventDefault(); if (passwordInput === 'Karsa123') { setIsAdminAuthenticated(true); setShowAdminLogin(false); setActiveMenu('Pengaturan Admin'); setPasswordInput(''); } else { alert('Password Salah!'); } };
-            
-            // UPDATED: Transaction now reduces planned quantity & shows limit
-            const addTransaction = (newData) => { 
-                const newTx = { id: Date.now(), ...newData, price: getPrice(parseInt(newData.itemId)) }; 
-                setTransactions(prev => [newTx, ...prev]); 
-                setInventory(prevInv => prevInv.map(item => { if (item.id === parseInt(newData.itemId)) { return { ...item, stock: newData.type === 'Masuk' ? item.stock + parseInt(newData.qty) : item.stock - parseInt(newData.qty) }; } return item; }));
-                
-                if (newData.type === 'Keluar' && plans[newData.source]) {
-                   setPlans(prev => {
-                       const instansiPlan = prev[newData.source] || {};
-                       const currentPlanQty = instansiPlan[parseInt(newData.itemId)] || 0;
-                       const newPlanQty = Math.max(0, currentPlanQty - parseInt(newData.qty));
-                       return {
-                           ...prev,
-                           [newData.source]: { ...instansiPlan, [parseInt(newData.itemId)]: newPlanQty }
-                       };
-                   });
-                }
-            };
-            
-            const currentBudget = budgets[selectedInstansi] || 0;
-            const calculateTotalPlan = () => { const currentPlan = plans[selectedInstansi] || {}; return Object.entries(currentPlan).reduce((total, [id, qty]) => { const price = getPrice(parseInt(id)); return total + (price * qty); }, 0); };
-            const handleRealizePlan = (itemId, qty) => { if (qty <= 0) return alert("Jumlah perencanaan masih 0."); if (confirm(`Kirim ${qty} unit ${inventory.find(i => i.id === itemId)?.name} ke ${selectedInstansi}?`)) addTransaction({ date: new Date().toISOString().split('T')[0], type: 'Keluar', itemId: itemId, qty: qty, source: selectedInstansi }); };
-            const handleAddInstansi = (name) => { if (!name.trim() || instansiList.includes(name)) return; const newName = name.toUpperCase(); setInstansiList([...instansiList, newName]); setBudgets(prev => ({ ...prev, [newName]: 5000000 })); setPlans(prev => ({ ...prev, [newName]: {} })); setNewInstansi(''); };
-            const handleUpdateBudget = (inst, val) => setBudgets(prev => ({ ...prev, [inst]: parseInt(val) || 0 }));
-            
-            // UPDATED TX SUBMIT: Validasi Plan Limit + Transaction Type
-            const handleTxSubmit = (e) => {
-                e.preventDefault();
-                if (!txForm.itemId) return alert('Pilih barang dulu');
-                
-                const item = inventory.find(i => i.id === parseInt(txForm.itemId));
-                const qty = parseInt(txForm.qty);
+  return (
+    <div className="min-h-screen bg-gray-50 flex flex-col">
+      {/* Header */}
+      <header className="bg-white shadow-sm sticky top-0 z-50">
+        <div className="max-w-7xl mx-auto px-4 py-3 flex justify-between items-center">
+          <div className="flex items-center gap-2">
+            <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center text-white font-bold">A</div>
+            <h1 className="font-bold text-gray-800 hidden sm:block">E-Absensi</h1>
+          </div>
+          
+          <div className="flex items-center gap-4">
+            <div className="text-right hidden sm:block">
+              <p className="text-sm font-medium text-gray-900">{currentUser.name}</p>
+              <p className="text-xs text-gray-500 capitalize">{currentUser.role}</p>
+            </div>
+            <button onClick={handleLogout} className="p-2 hover:bg-gray-100 rounded-full text-red-500">
+              <LogOut size={20} />
+            </button>
+          </div>
+        </div>
+      </header>
 
-                if (txForm.type === 'Keluar') {
-                    if (item.stock < qty) return alert(`Stok gudang utama tidak cukup! Tersedia: ${item.stock}`);
-                    const instansiPlan = plans[txForm.source] || {};
-                    const plannedQty = instansiPlan[parseInt(txForm.itemId)] || 0;
-                    if (qty > plannedQty) {
-                        return alert(`Jumlah melebihi sisa perencanaan! Sisa jatah: ${plannedQty}`);
-                    }
-                }
+      {/* Main Content */}
+      <main className="flex-1 max-w-7xl w-full mx-auto p-4">
+        {currentUser.role === 'admin' ? (
+          <AdminDashboard 
+            users={users} 
+            setUsers={setUsers} 
+            logs={logs} 
+            announcements={announcements}
+            setAnnouncements={setAnnouncements}
+          />
+        ) : (
+          <EmployeeDashboard 
+            user={currentUser} 
+            logs={logs} 
+            setLogs={setLogs}
+            announcements={announcements}
+          />
+        )}
+      </main>
+    </div>
+  );
+}
 
-                addTransaction(txForm); 
-                setTxForm({ ...txForm, itemId: '', qty: 1 });
-            };
+// --- DASHBOARD ADMIN ---
 
-            const openPrintPreview = (title, dateRange, content) => setPreviewData({ title, dateRange, content });
-            const triggerPrint = () => window.print();
-            
-            // Manual Plan Handler
-            const handleManualPlanSubmit = (e) => {
-                e.preventDefault();
-                if (manualPlanForm.mode === 'existing') {
-                   if (!manualPlanForm.itemId) return alert("Pilih barang terlebih dahulu!");
-                   handlePlanChange(parseInt(manualPlanForm.itemId), parseInt(manualPlanForm.qty));
-                } else {
-                   // Adding new "Other" item
-                   const newItem = {
-                       id: Date.now(),
-                       name: manualPlanForm.name,
-                       brand: manualPlanForm.brand,
-                       category: 'Kebutuhan Lainnya',
-                       price: parseInt(manualPlanForm.price) || 0,
-                       stock: 0,
-                       image: '📦'
-                   };
-                   setInventory(prev => [...prev, newItem]);
-                   if(!categories.includes('Kebutuhan Lainnya')) setCategories(prev => [...prev, 'Kebutuhan Lainnya']);
-                   
-                   // Add to plan immediately
-                   setPlans(prev => ({
-                       ...prev,
-                       [selectedInstansi]: {
-                           ...prev[selectedInstansi],
-                           [newItem.id]: (prev[selectedInstansi][newItem.id] || 0) + parseInt(manualPlanForm.qty)
-                       }
-                   }));
-                }
-                setShowManualPlanModal(false);
-                setManualPlanForm({ mode: 'existing', itemId: '', isNewItem: false, name: '', brand: '', price: 0, qty: 1 });
-            };
+function AdminDashboard({ users, setUsers, logs, announcements, setAnnouncements }) {
+  const [view, setView] = useState('overview'); // overview, employees, reports, announcements
+  const [newUser, setNewUser] = useState({ name: '', email: '', department: '', role: 'employee' });
 
-            // Simulation Uploads
-            const handleStockFileUpload = (e) => { const file = e.target.files[0]; if(!file) return; setTimeout(() => { const newItems = Array.from({ length: 3 }).map((_, i) => ({ id: Date.now() + i, name: `Barang Impor Excel ${i + 1}`, brand: 'Generic', price: 15000 * (i + 1), category: 'Impor', stock: 50, image: '📦' })); setInventory(prev => [...prev, ...newItems]); setCategories(prev => [...new Set([...prev, 'Impor'])]); alert(`Berhasil mengimpor stok dari file: ${file.name}`); e.target.value = null; }, 800); };
-            const handleFileUpload = (e) => { 
-                const file = e.target.files[0]; 
-                if(!file) return; 
-                setTimeout(() => { 
-                    const shuffled = [...inventory].sort(() => 0.5 - Math.random()); 
-                    const randomItems = shuffled.slice(0, 5); 
-                    
-                    const newExcelItem = { id: Date.now(), name: 'Snack Rapat (Import)', brand: 'Lokal', category: 'Kebutuhan Lainnya', price: 15000, stock: 0, image: '🍪' };
-                    setInventory(prev => [...prev, newExcelItem]); 
-                    if(!categories.includes('Kebutuhan Lainnya')) setCategories(prev => [...prev, 'Kebutuhan Lainnya']);
+  // Stats
+  const todayLogs = logs.filter(l => new Date(l.timestamp).toDateString() === new Date().toDateString());
+  const uniqueAttendees = new Set(todayLogs.map(l => l.userId)).size;
 
-                    setPlans(prev => { 
-                        const instansiPlan = prev[selectedInstansi] || {}; 
-                        const newPlan = { ...instansiPlan }; 
-                        randomItems.forEach(item => { const qtyToAdd = Math.floor(Math.random() * 6) + 5; newPlan[item.id] = (newPlan[item.id] || 0) + qtyToAdd; }); 
-                        newPlan[newExcelItem.id] = 50; 
-                        return { ...prev, [selectedInstansi]: newPlan }; 
-                    }); 
-                    alert(`Berhasil mengimpor data dari file: ${file.name}`); 
-                    e.target.value = null; 
-                }, 800); 
-            };
+  const handleAddUser = (e) => {
+    e.preventDefault();
+    const id = users.length + 1;
+    setUsers([...users, { ...newUser, id, password: 'user' }]); // Default password
+    setNewUser({ name: '', email: '', department: '', role: 'employee' });
+    alert('Karyawan berhasil ditambahkan!');
+  };
 
-            // Views
-            const renderDashboardView = () => (
-                <div className="animate-fade-in p-4">
-                    <div className="mb-10 text-center"><h1 className="text-4xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-purple-500 mb-2">Selamat Datang di {COMPANY_NAME}</h1><p className="text-gray-400">Pusat Kontrol Manajemen Logistik & Inventaris</p></div>
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 max-w-6xl mx-auto">
-                        <button onClick={() => setActiveMenu('Stok Barang')} className="group relative bg-[#1e1e1e] p-8 rounded-2xl border border-gray-800 hover:border-gray-600 transition-all text-left overflow-hidden"><div className="absolute top-0 right-0 p-3 opacity-20 text-orange-500"><Box size={100} /></div><div className="w-16 h-16 rounded-xl bg-orange-500/10 flex items-center justify-center mb-6"><Box size={32} className="text-orange-500" /></div><h3 className="text-xl font-bold text-white mb-2">Stok Barang</h3><p className="text-sm text-gray-500">Kelola stok gudang pusat</p></button>
-                        <button onClick={() => setActiveMenu('Perencanaan')} className="group relative bg-[#1e1e1e] p-8 rounded-2xl border border-gray-800 hover:border-gray-600 transition-all text-left overflow-hidden"><div className="absolute top-0 right-0 p-3 opacity-20 text-blue-500"><TrendingUp size={100} /></div><div className="w-16 h-16 rounded-xl bg-blue-500/10 flex items-center justify-center mb-6"><TrendingUp size={32} className="text-blue-500" /></div><h3 className="text-xl font-bold text-white mb-2">Perencanaan</h3><p className="text-sm text-gray-500">Rencana kebutuhan instansi</p></button>
-                        <button onClick={() => setActiveMenu('Transaksi Harian')} className="group relative bg-[#1e1e1e] p-8 rounded-2xl border border-gray-800 hover:border-gray-600 transition-all text-left overflow-hidden"><div className="absolute top-0 right-0 p-3 opacity-20 text-green-500"><ArrowRightLeft size={100} /></div><div className="w-16 h-16 rounded-xl bg-green-500/10 flex items-center justify-center mb-6"><ArrowRightLeft size={32} className="text-green-500" /></div><h3 className="text-xl font-bold text-white mb-2">Transaksi</h3><p className="text-sm text-gray-500">Riwayat keluar masuk</p></button>
-                        <button onClick={() => setActiveMenu('Belanja Bulanan')} className="group relative bg-[#1e1e1e] p-8 rounded-2xl border border-gray-800 hover:border-gray-600 transition-all text-left overflow-hidden"><div className="absolute top-0 right-0 p-3 opacity-20 text-purple-500"><CreditCard size={100} /></div><div className="w-16 h-16 rounded-xl bg-purple-500/10 flex items-center justify-center mb-6"><CreditCard size={32} className="text-purple-500" /></div><h3 className="text-xl font-bold text-white mb-2">Belanja</h3><p className="text-sm text-gray-500">Laporan pembelian</p></button>
-                        <button onClick={() => setActiveMenu('Laporan Bulanan')} className="group relative bg-[#1e1e1e] p-8 rounded-2xl border border-gray-800 hover:border-gray-600 transition-all text-left overflow-hidden"><div className="absolute top-0 right-0 p-3 opacity-20 text-pink-500"><PieChart size={100} /></div><div className="w-16 h-16 rounded-xl bg-pink-500/10 flex items-center justify-center mb-6"><PieChart size={32} className="text-pink-500" /></div><h3 className="text-xl font-bold text-white mb-2">Laporan</h3><p className="text-sm text-gray-500">Rekapitulasi distribusi</p></button>
-                    </div>
+  const handleExport = () => {
+    // Simulasi Export CSV
+    let csvContent = "data:text/csv;charset=utf-8,ID,Nama,Tipe,Waktu,Lokasi\n";
+    logs.forEach(row => {
+      csvContent += `${row.id},${row.name},${row.type},${row.timestamp},"${row.location}"\n`;
+    });
+    const encodedUri = encodeURI(csvContent);
+    const link = document.createElement("a");
+    link.setAttribute("href", encodedUri);
+    link.setAttribute("download", "laporan_absensi.csv");
+    document.body.appendChild(link);
+    link.click();
+  };
+
+  const handleAddAnnouncement = (text) => {
+    const newAnn = {
+        id: Date.now(),
+        title: "Info Admin",
+        content: text,
+        date: new Date().toISOString().split('T')[0]
+    };
+    setAnnouncements([newAnn, ...announcements]);
+  };
+
+  return (
+    <div className="space-y-6">
+      {/* Navigation Tabs */}
+      <div className="flex overflow-x-auto gap-2 pb-2">
+        {[
+          { id: 'overview', label: 'Dashboard', icon: Home },
+          { id: 'employees', label: 'Data Karyawan', icon: Users },
+          { id: 'reports', label: 'Laporan Absensi', icon: FileText },
+          { id: 'announcements', label: 'Pengumuman', icon: Bell },
+        ].map((tab) => (
+          <button
+            key={tab.id}
+            onClick={() => setView(tab.id)}
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg whitespace-nowrap transition ${
+              view === tab.id 
+                ? 'bg-blue-600 text-white shadow-md' 
+                : 'bg-white text-gray-600 hover:bg-gray-50'
+            }`}
+          >
+            <tab.icon size={18} />
+            {tab.label}
+          </button>
+        ))}
+      </div>
+
+      {view === 'overview' && (
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <Card className="bg-gradient-to-br from-blue-500 to-blue-600 text-white border-none">
+            <h3 className="text-blue-100 font-medium">Total Karyawan</h3>
+            <p className="text-3xl font-bold mt-2">{users.length - 1}</p> {/* Exclude admin */}
+          </Card>
+          <Card className="bg-gradient-to-br from-green-500 to-green-600 text-white border-none">
+            <h3 className="text-green-100 font-medium">Hadir Hari Ini</h3>
+            <p className="text-3xl font-bold mt-2">{uniqueAttendees}</p>
+          </Card>
+          <Card className="bg-gradient-to-br from-purple-500 to-purple-600 text-white border-none">
+            <h3 className="text-purple-100 font-medium">Belum Hadir</h3>
+            <p className="text-3xl font-bold mt-2">{(users.length - 1) - uniqueAttendees}</p>
+          </Card>
+
+          <div className="md:col-span-3">
+             <h3 className="text-lg font-bold text-gray-800 mb-4">Aktivitas Terbaru</h3>
+             <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+                <table className="w-full text-left text-sm">
+                  <thead className="bg-gray-50 border-b">
+                    <tr>
+                      <th className="p-4 font-medium text-gray-600">Nama</th>
+                      <th className="p-4 font-medium text-gray-600">Waktu</th>
+                      <th className="p-4 font-medium text-gray-600">Tipe</th>
+                      <th className="p-4 font-medium text-gray-600">Lokasi</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {logs.slice(0, 5).map(log => (
+                      <tr key={log.id} className="border-b last:border-0 hover:bg-gray-50">
+                        <td className="p-4 font-medium">{log.name}</td>
+                        <td className="p-4 text-gray-500">{formatDate(log.timestamp)}</td>
+                        <td className="p-4">
+                          <Badge type={log.type === 'Masuk' ? 'success' : log.type === 'Istirahat' ? 'warning' : 'danger'}>{log.type}</Badge>
+                        </td>
+                        <td className="p-4 text-gray-500 truncate max-w-xs">{log.location}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+             </div>
+          </div>
+        </div>
+      )}
+
+      {view === 'employees' && (
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          <div className="lg:col-span-2">
+            <div className="bg-white rounded-xl shadow-sm border overflow-hidden">
+                <div className="p-4 border-b flex justify-between items-center bg-gray-50">
+                    <h3 className="font-bold text-gray-700">Daftar Karyawan</h3>
+                    <Button variant="outline" icon={Upload} onClick={() => alert("Fitur Import Excel akan membuka file dialog.")}>Import Excel</Button>
                 </div>
-            );
+                <table className="w-full text-left text-sm">
+                  <thead className="bg-gray-50 border-b">
+                    <tr>
+                      <th className="p-3">Nama</th>
+                      <th className="p-3">Email</th>
+                      <th className="p-3">Dept</th>
+                      <th className="p-3">Aksi</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {users.filter(u => u.role !== 'admin').map(u => (
+                      <tr key={u.id} className="border-b">
+                        <td className="p-3 font-medium">{u.name}</td>
+                        <td className="p-3 text-gray-500">{u.email}</td>
+                        <td className="p-3"><Badge>{u.department}</Badge></td>
+                        <td className="p-3">
+                            <button className="text-blue-600 hover:text-blue-800 text-xs font-semibold">Edit</button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+            </div>
+          </div>
 
-            const renderStokBarangView = () => {
-                const filtered = inventory.filter(i => i.name.toLowerCase().includes(searchTerm.toLowerCase()));
-                return (
-                    <div className="animate-fade-in pb-20">
-                        <div className="flex justify-between items-center mb-6">
-                           <div><h1 className="text-2xl font-bold text-white">Stok Gudang</h1><p className="text-gray-400 text-sm">Data keseluruhan barang.</p></div>
-                           <div className="flex gap-2"><div className="relative w-64"><Search className="absolute left-3 top-2.5 text-gray-500" size={18}/><input type="text" placeholder="Cari..." className="w-full bg-[#1e1e1e] border border-gray-700 text-white rounded-lg pl-10 pr-4 py-2 text-sm" value={searchTerm} onChange={e => setSearchTerm(e.target.value)}/></div>{isAdmin && <><input type="file" ref={stockFileInputRef} className="hidden" onChange={handleStockFileUpload}/><button onClick={() => stockFileInputRef.current.click()} className="bg-green-600 text-white px-3 py-2 rounded-lg text-sm font-bold flex items-center gap-1"><FileSpreadsheet size={16}/> Import</button><button onClick={handleAddClick} className="bg-blue-600 text-white px-3 py-2 rounded-lg text-sm font-bold flex items-center gap-1"><Plus size={16}/> Tambah</button></>}</div>
+          <div>
+             <Card>
+                <h3 className="font-bold text-gray-800 mb-4">Tambah Anggota</h3>
+                <form onSubmit={handleAddUser} className="space-y-3">
+                    <input className="w-full p-2 border rounded" placeholder="Nama Lengkap" value={newUser.name} onChange={e => setNewUser({...newUser, name: e.target.value})} required />
+                    <input className="w-full p-2 border rounded" type="email" placeholder="Email" value={newUser.email} onChange={e => setNewUser({...newUser, email: e.target.value})} required />
+                    <select className="w-full p-2 border rounded" value={newUser.department} onChange={e => setNewUser({...newUser, department: e.target.value})} required>
+                        <option value="">Pilih Departemen</option>
+                        <option value="IT">IT</option>
+                        <option value="HRD">HRD</option>
+                        <option value="Finance">Finance</option>
+                        <option value="Marketing">Marketing</option>
+                    </select>
+                    <Button className="w-full" variant="success">Simpan Data</Button>
+                </form>
+             </Card>
+          </div>
+        </div>
+      )}
+
+      {view === 'reports' && (
+        <div className="space-y-4">
+            <div className="flex justify-between items-center bg-white p-4 rounded-xl shadow-sm">
+                <h2 className="font-bold text-gray-700">Laporan Kehadiran</h2>
+                <Button icon={Download} onClick={handleExport}>Export ke Excel</Button>
+            </div>
+            <div className="bg-white rounded-xl shadow-sm border overflow-hidden overflow-x-auto">
+                <table className="w-full text-left text-sm">
+                    <thead className="bg-gray-50 border-b">
+                    <tr>
+                        <th className="p-4">Tanggal</th>
+                        <th className="p-4">Nama</th>
+                        <th className="p-4">Status</th>
+                        <th className="p-4">Waktu</th>
+                        <th className="p-4">Bukti Foto</th>
+                    </tr>
+                    </thead>
+                    <tbody>
+                    {logs.map(log => (
+                        <tr key={log.id} className="border-b hover:bg-gray-50">
+                        <td className="p-4">{new Date(log.timestamp).toLocaleDateString()}</td>
+                        <td className="p-4 font-medium">{log.name}</td>
+                        <td className="p-4"><Badge type={log.type === 'Masuk' ? 'success' : log.type === 'Istirahat' ? 'warning' : 'danger'}>{log.type}</Badge></td>
+                        <td className="p-4">{new Date(log.timestamp).toLocaleTimeString()}</td>
+                        <td className="p-4">
+                            {log.photo ? (
+                                <img src={log.photo} alt="Bukti" className="w-10 h-10 rounded-full object-cover border" />
+                            ) : <span className="text-gray-400 text-xs">No Photo</span>}
+                        </td>
+                        </tr>
+                    ))}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+      )}
+
+      {view === 'announcements' && (
+         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <Card>
+                <h3 className="font-bold mb-4">Buat Pengumuman Baru</h3>
+                <form onSubmit={(e) => {
+                    e.preventDefault();
+                    handleAddAnnouncement(e.target.content.value);
+                    e.target.reset();
+                }}>
+                    <textarea name="content" className="w-full p-3 border rounded-lg h-32 focus:ring-2 focus:ring-blue-500 focus:outline-none" placeholder="Tulis pengumuman di sini..."></textarea>
+                    <Button className="w-full mt-3">Kirim Pengumuman</Button>
+                </form>
+            </Card>
+            <div className="space-y-3">
+                {announcements.map(ann => (
+                    <div key={ann.id} className="bg-white p-4 rounded-lg border shadow-sm">
+                        <div className="flex justify-between items-start mb-2">
+                            <h4 className="font-bold text-gray-800">{ann.title}</h4>
+                            <span className="text-xs text-gray-500">{ann.date}</span>
                         </div>
-                        <div className="bg-[#1e1e1e] rounded-xl border border-gray-800 overflow-hidden shadow-lg">
-                           <table className="w-full text-left text-sm"><thead className="bg-[#2a2a2a] text-gray-400"><tr><th className="p-4">Barang</th><th className="p-4">Brand</th><th className="p-4">Kategori</th><th className="p-4 text-right">Harga</th><th className="p-4 text-center">Stok</th>{isAdmin && <th className="p-4 text-center">Aksi</th>}</tr></thead>
-                           <tbody className="divide-y divide-gray-800">{filtered.map(item => (<tr key={item.id} className="hover:bg-[#252525]"><td className="p-4 flex gap-3 items-center"><span className="text-2xl">{item.image}</span><span className="text-white font-medium">{item.name}</span></td><td className="p-4 text-gray-300">{item.brand}</td><td className="p-4"><span className="bg-gray-800 px-2 py-1 rounded text-xs">{item.category}</span></td><td className="p-4 text-right text-blue-400"><div className="flex justify-end gap-1 items-center"><span className="text-gray-500">Rp</span><input disabled={!isAdmin} className="bg-transparent w-20 text-right focus:outline-none" value={formatNumber(item.price)} onChange={e => handleItemUpdate(item.id, 'price', parseNumber(e.target.value))}/></div></td><td className="p-4 text-center font-bold text-white">{item.stock}</td>{isAdmin && <td className="p-4 text-center"><button onClick={() => handleEditClick(item)} className="p-2 hover:bg-blue-900/30 text-blue-400 rounded"><Edit size={16}/></button></td>}</tr>))}</tbody></table>
-                        </div>
-                        {editingItem && isAdmin && (
-                            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
-                                <div className="bg-[#1e1e1e] border border-gray-700 rounded-xl w-full max-w-md p-6"><div className="flex justify-between items-center mb-4"><h3 className="text-lg font-bold text-white">{isAddingNew ? 'Tambah' : 'Edit'} Barang</h3><button onClick={() => setEditingItem(null)} className="text-gray-400"><X size={20}/></button></div>
-                                <form onSubmit={handleSaveEdit} className="space-y-4">
-                                   <div><label className="text-xs text-gray-400">Nama</label><input required className="w-full bg-[#121212] border border-gray-700 text-white p-2 rounded" value={editingItem.name} onChange={e => setEditingItem({...editingItem, name: e.target.value})} disabled={!isAddingNew}/></div>
-                                   <div className="grid grid-cols-2 gap-4"><div><label className="text-xs text-gray-400">Brand</label><input className="w-full bg-[#121212] border border-gray-700 text-white p-2 rounded" value={editingItem.brand} onChange={e => setEditingItem({...editingItem, brand: e.target.value})}/></div><div><label className="text-xs text-gray-400">Stok</label><input type="number" className="w-full bg-[#121212] border border-gray-700 text-white p-2 rounded" value={editingItem.stock} onChange={e => setEditingItem({...editingItem, stock: parseInt(e.target.value) || 0})}/></div></div>
-                                   <div><label className="text-xs text-gray-400">Harga (Rp)</label><input className="w-full bg-[#121212] border border-gray-700 text-white p-2 rounded" value={formatNumber(editingItem.price)} onChange={e => setEditingItem({...editingItem, price: parseNumber(e.target.value)})}/></div>
-                                   <button type="submit" className="w-full bg-blue-600 text-white p-2 rounded font-bold">Simpan</button>
-                                </form></div>
-                            </div>
-                        )}
+                        <p className="text-sm text-gray-600">{ann.content}</p>
                     </div>
-                );
-            };
+                ))}
+            </div>
+         </div>
+      )}
+    </div>
+  );
+}
 
-            const renderPerencanaanView = () => {
-                const totalPlan = calculateTotalPlan();
-                const itemsByCategory = inventory.reduce((acc, item) => { if (!acc[item.category]) acc[item.category] = []; acc[item.category].push(item); return acc; }, {});
-                
-                return (
-                    <div className="animate-fade-in pb-20">
-                        <div className="flex justify-between items-end mb-8">
-                            <div><h1 className="text-2xl font-bold text-white">Perencanaan</h1><p className="text-gray-400 text-sm">Instansi: <span className="text-blue-400 font-bold">{selectedInstansi}</span></p></div>
-                            {isAdmin && (
-                                <div className="flex gap-2">
-                                    <input type="file" ref={fileInputRef} className="hidden" onChange={handleFileUpload}/>
-                                    <button onClick={() => fileInputRef.current.click()} className="bg-green-600 text-white px-3 py-2 rounded text-sm font-bold flex gap-1"><FileSpreadsheet size={16}/> Import</button>
-                                    <button onClick={() => setShowManualPlanModal(true)} className="bg-red-600 text-white px-3 py-2 rounded text-sm font-bold flex gap-1"><ClipboardList size={16}/> Manual</button>
-                                </div>
-                            )}
-                        </div>
-                        <div className="grid grid-cols-3 gap-6 mb-8">
-                            <div className="bg-[#1e1e1e] p-5 rounded-xl border-l-4 border-blue-500 shadow-lg"><p className="text-blue-400 text-xs font-bold uppercase">Pagu Anggaran</p><h3 className="text-2xl font-bold text-white">{formatRupiah(currentBudget)}</h3></div>
-                            <div className="bg-[#1e1e1e] p-5 rounded-xl border-l-4 border-orange-500 shadow-lg"><p className="text-orange-400 text-xs font-bold uppercase">Rencana Belanja</p><h3 className="text-2xl font-bold text-white">{formatRupiah(totalPlan)}</h3></div>
-                            <div className="bg-[#1e1e1e] p-5 rounded-xl border-l-4 border-green-500 shadow-lg"><p className="text-green-400 text-xs font-bold uppercase">Sisa Anggaran</p><h3 className="text-2xl font-bold text-white">{formatRupiah(currentBudget - totalPlan)}</h3></div>
-                        </div>
-                        {Object.entries(itemsByCategory).map(([category, items]) => (
-                            <div key={category} className="mb-8">
-                                <div className="flex items-center gap-2 mb-4 pb-2 border-b border-gray-700"><Tag size={20} className="text-blue-500"/><h2 className="text-xl font-bold text-white">{category}</h2></div>
-                                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-                                    {items.map(item => {
-                                        const qty = (plans[selectedInstansi] || {})[item.id] || 0;
-                                        return (
-                                            <div key={item.id} className={`bg-[#1e1e1e] border ${qty > 0 ? 'border-orange-500' : 'border-gray-800'} rounded-xl p-4`}>
-                                                <div className="flex gap-4">
-                                                    <span className="text-3xl">{item.image}</span>
-                                                    <div className="flex-1 min-w-0">
-                                                        <h4 className="font-bold text-white truncate">{item.name}</h4>
-                                                        <div className="flex items-center gap-1 mb-2"><Tag size={12} className="text-gray-500"/><input disabled={!isAdmin} className="bg-transparent text-xs text-gray-400 w-full focus:outline-none" value={item.brand} onChange={e => handleItemUpdate(item.id, 'brand', e.target.value)}/></div>
-                                                        <div className="flex items-center gap-1 bg-[#121212] p-1.5 rounded mb-3"><span className="text-xs text-gray-500">Rp</span><input disabled={!isAdmin} className="bg-transparent text-xs text-blue-400 w-full focus:outline-none" value={formatNumber(getPrice(item.id))} onChange={e => handlePriceChange(item.id, e.target.value)}/></div>
-                                                        <div className="flex justify-between items-center">
-                                                            <div className="flex items-center bg-[#2a2a2a] rounded-lg border border-gray-700">
-                                                                {isAdmin ? <><button onClick={() => handlePlanChange(item.id, -1)} className="w-8 h-8 flex justify-center items-center text-white hover:bg-[#333]"><Minus size={14}/></button><span className="w-8 text-center text-sm font-bold text-white">{qty}</span><button onClick={() => handlePlanChange(item.id, 1)} className="w-8 h-8 flex justify-center items-center text-white hover:bg-[#333]"><Plus size={14}/></button></> : <span className="px-4 py-1 text-sm font-bold text-white">Qty: {qty}</span>}
-                                                            </div>
-                                                            {qty > 0 && isAdmin && <button onClick={() => handleRealizePlan(item.id, qty)} className="ml-2 bg-blue-600 text-white p-2 rounded-lg" title="Kirim"><Send size={14}/></button>}
-                                                        </div>
-                                                    </div>
-                                                </div>
-                                            </div>
-                                        );
-                                    })}
-                                </div>
-                            </div>
-                        ))}
+// --- DASHBOARD KARYAWAN ---
 
-                        {/* MANUAL INPUT MODAL */}
-                        {showManualPlanModal && (
-                            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4">
-                                <div className="bg-[#1e1e1e] border border-gray-700 rounded-xl w-full max-w-md p-6">
-                                    <div className="flex justify-between items-center mb-4"><h3 className="text-lg font-bold text-white">Input Manual Perencanaan</h3><button onClick={() => setShowManualPlanModal(false)} className="text-gray-400"><X size={20}/></button></div>
-                                    
-                                    {/* Tabs */}
-                                    <div className="flex mb-4 border-b border-gray-700">
-                                        <button 
-                                            className={`flex-1 py-2 text-sm font-bold ${manualPlanForm.mode === 'existing' ? 'text-blue-500 border-b-2 border-blue-500' : 'text-gray-400'}`}
-                                            onClick={() => setManualPlanForm({...manualPlanForm, mode: 'existing'})}
-                                        >
-                                            Pilih dari Stok
-                                        </button>
-                                        <button 
-                                            className={`flex-1 py-2 text-sm font-bold ${manualPlanForm.mode === 'new' ? 'text-blue-500 border-b-2 border-blue-500' : 'text-gray-400'}`}
-                                            onClick={() => setManualPlanForm({...manualPlanForm, mode: 'new'})}
-                                        >
-                                            Barang Lainnya (Baru)
-                                        </button>
-                                    </div>
+function EmployeeDashboard({ user, logs, setLogs, announcements }) {
+  const [activeTab, setActiveTab] = useState('absen'); // absen, history, permit
+  const [isCameraOpen, setIsCameraOpen] = useState(false);
+  const [location, setLocation] = useState(null);
+  const [locationError, setLocationError] = useState(null);
+  const [photo, setPhoto] = useState(null);
+  const videoRef = useRef(null);
+  const canvasRef = useRef(null);
 
-                                    <form onSubmit={handleManualPlanSubmit} className="space-y-4">
-                                        {manualPlanForm.mode === 'existing' ? (
-                                            <div>
-                                                <label className="block text-xs text-gray-400 mb-1">Pilih Barang Stok</label>
-                                                <select className="w-full bg-[#121212] border border-gray-700 text-white p-2 rounded" value={manualPlanForm.itemId} onChange={e => setManualPlanForm({...manualPlanForm, itemId: e.target.value})}>
-                                                    <option value="">-- Pilih --</option>
-                                                    {inventory.map(i => <option key={i.id} value={i.id}>{i.name} ({i.category})</option>)}
-                                                </select>
-                                            </div>
-                                        ) : (
-                                            <>
-                                                <div><label className="block text-xs text-gray-400 mb-1">Nama Barang Baru</label><input required className="w-full bg-[#121212] border border-gray-700 text-white p-2 rounded" value={manualPlanForm.name} onChange={e => setManualPlanForm({...manualPlanForm, name: e.target.value})}/></div>
-                                                <div><label className="block text-xs text-gray-400 mb-1">Brand / Keterangan</label><input className="w-full bg-[#121212] border border-gray-700 text-white p-2 rounded" value={manualPlanForm.brand} onChange={e => setManualPlanForm({...manualPlanForm, brand: e.target.value})}/></div>
-                                                <div><label className="block text-xs text-gray-400 mb-1">Estimasi Harga (Rp)</label><input className="w-full bg-[#121212] border border-gray-700 text-white p-2 rounded" value={manualPlanForm.price} onChange={e => setManualPlanForm({...manualPlanForm, price: e.target.value})}/></div>
-                                                <p className="text-xs text-yellow-500 italic">*Barang ini akan otomatis ditambahkan ke Stok Gudang sebagai "Kebutuhan Lainnya"</p>
-                                            </>
-                                        )}
+  // Filter logs for current user
+  const myLogs = logs.filter(l => l.userId === user.id).sort((a,b) => new Date(b.timestamp) - new Date(a.timestamp));
 
-                                        <div>
-                                            <label className="block text-xs text-gray-400 mb-1">Jumlah Rencana</label>
-                                            <div className="flex items-center gap-3">
-                                                <button type="button" onClick={() => setManualPlanForm(p => ({...p, qty: Math.max(1, p.qty - 1)}))} className="p-2 bg-gray-700 rounded"><Minus size={14}/></button>
-                                                <input type="number" min="1" className="w-20 bg-[#121212] border border-gray-700 text-white p-2 rounded text-center" value={manualPlanForm.qty} onChange={e => setManualPlanForm({...manualPlanForm, qty: parseInt(e.target.value) || 1})}/>
-                                                <button type="button" onClick={() => setManualPlanForm(p => ({...p, qty: p.qty + 1}))} className="p-2 bg-gray-700 rounded"><Plus size={14}/></button>
-                                            </div>
-                                        </div>
+  // Initialize Camera
+  const startCamera = async () => {
+    try {
+      setIsCameraOpen(true);
+      const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+      }
+    } catch (err) {
+      alert("Gagal mengakses kamera. Pastikan izin diberikan.");
+      setIsCameraOpen(false);
+    }
+  };
 
-                                        <button className="w-full bg-blue-600 text-white p-2 rounded font-bold mt-4">Simpan ke Rencana</button>
-                                    </form>
-                                </div>
-                            </div>
-                        )}
-                    </div>
-                );
-            };
+  // Capture Photo
+  const takePhoto = () => {
+    const video = videoRef.current;
+    const canvas = canvasRef.current;
+    if (video && canvas) {
+      const context = canvas.getContext('2d');
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      context.drawImage(video, 0, 0, canvas.width, canvas.height);
+      const dataUrl = canvas.toDataURL('image/png');
+      setPhoto(dataUrl);
+      
+      // Stop stream
+      const stream = video.srcObject;
+      const tracks = stream.getTracks();
+      tracks.forEach(track => track.stop());
+      setIsCameraOpen(false);
+    }
+  };
 
-            const renderTransaksiHarianView = () => {
-                const currentPlan = plans[selectedInstansi] || {};
-                const availableItemsForTransaction = inventory.filter(item => { const plannedQty = currentPlan[item.id] || 0; return plannedQty > 0; });
-                
-                const filteredTransactions = transactions; 
-                const printTx = () => {
-                   const content = <table className="w-full text-left text-sm border-collapse border border-black"><thead><tr className="bg-gray-200"><th className="border border-black p-2">Tgl</th><th className="border border-black p-2">Barang</th><th className="border border-black p-2">Tipe</th><th className="border border-black p-2">Ket</th><th className="border border-black p-2 text-right">Qty</th></tr></thead><tbody>{transactions.map(tx => <tr key={tx.id}><td className="border border-black p-2">{tx.date}</td><td className="border border-black p-2">{getItemName(tx.itemId)}</td><td className="border border-black p-2">{tx.type}</td><td className="border border-black p-2">{tx.source}</td><td className="border border-black p-2 text-right">{tx.qty}</td></tr>)}</tbody></table>;
-                   openPrintPreview('Laporan Transaksi', new Date().toLocaleDateString(), content);
-                };
-                
-                const printReceipt = (tx) => {
-                    const content = (
-                        <div className="border-2 border-black p-6">
-                            <div className="flex justify-between mb-8"><div className="w-1/2"><p className="font-bold text-gray-500 uppercase text-xs">Kepada:</p><p className="font-bold text-xl">{tx.source}</p></div><div className="w-1/2 text-right"><p className="font-bold text-gray-500 uppercase text-xs">Dari:</p><p className="font-bold">Gudang Pusat</p></div></div>
-                            <table className="w-full text-left border border-black mb-8"><thead><tr className="bg-gray-200"><th className="border border-black p-2">Barang</th><th className="border border-black p-2">Merk</th><th className="border border-black p-2 text-center">Qty</th></tr></thead><tbody><tr><td className="border border-black p-3 font-bold">{getItemName(tx.itemId)}</td><td className="border border-black p-3">{getBrandName(tx.itemId)}</td><td className="border border-black p-3 text-center font-bold text-lg">{tx.qty} Unit</td></tr></tbody></table>
-                        </div>
-                    );
-                    openPrintPreview(`SURAT JALAN #${tx.id}`, tx.date, content);
-                };
-
-                return (
-                    <div className="animate-fade-in pb-20">
-                        <div className="flex gap-6 no-print">
-                            {isAdmin && (
-                                <div className="w-1/3 bg-[#1e1e1e] p-6 rounded-xl border border-gray-800 h-fit sticky top-6">
-                                    <h3 className="text-xl font-bold text-white mb-4">Input Transaksi</h3>
-                                    <form onSubmit={handleTxSubmit} className="space-y-4">
-                                        <div><label className="text-xs text-gray-400">Tanggal</label><input type="date" className="w-full bg-[#121212] border border-gray-700 text-white p-2 rounded" value={txForm.date} onChange={e => setTxForm({...txForm, date: e.target.value})}/></div>
-                                        
-                                        {/* TYPE SELECTION */}
-                                        <div>
-                                            <label className="text-xs text-gray-400">Tipe Transaksi</label>
-                                            <div className="flex gap-2 mt-1">
-                                                <button type="button" onClick={() => setTxForm({...txForm, type: 'Keluar', source: selectedInstansi})} className={`flex-1 py-2 rounded text-sm font-bold ${txForm.type === 'Keluar' ? 'bg-orange-600 text-white' : 'bg-gray-700 text-gray-400'}`}>Keluar</button>
-                                                <button type="button" onClick={() => setTxForm({...txForm, type: 'Masuk', source: 'Vendor'})} className={`flex-1 py-2 rounded text-sm font-bold ${txForm.type === 'Masuk' ? 'bg-green-600 text-white' : 'bg-gray-700 text-gray-400'}`}>Masuk</button>
-                                            </div>
-                                        </div>
-
-                                        <div>
-                                            <label className="text-xs text-gray-400">{txForm.type === 'Keluar' ? 'Tujuan (Instansi)' : 'Sumber (Vendor)'}</label>
-                                            {txForm.type === 'Keluar' ? (
-                                                <div className="w-full bg-[#121212] border border-gray-700 text-white p-2 rounded text-sm">{selectedInstansi}</div>
-                                            ) : (
-                                                <input type="text" className="w-full bg-[#121212] border border-gray-700 text-white p-2 rounded" value={txForm.source} onChange={e => setTxForm({...txForm, source: e.target.value})} placeholder="Nama Toko/Vendor"/>
-                                            )}
-                                        </div>
-
-                                        <div>
-                                            <label className="text-xs text-gray-400">Barang {txForm.type === 'Keluar' ? '(Sesuai Rencana)' : '(Semua Stok)'}</label>
-                                            <select className="w-full bg-[#121212] border border-gray-700 text-white p-2 rounded" value={txForm.itemId} onChange={e => setTxForm({...txForm, itemId: e.target.value})}>
-                                                <option value="">-- Pilih Barang --</option>
-                                                {availableItemsForTransaction.map(i => (
-                                                    <option key={i.id} value={i.id}>
-                                                        {i.name} {txForm.type === 'Keluar' ? `(Sisa Rencana: ${currentPlan[i.id] || 0})` : `(Stok Gudang: ${i.stock})`}
-                                                    </option>
-                                                ))}
-                                            </select>
-                                        </div>
-
-                                        <div>
-                                            <label className="text-xs text-gray-400">
-                                                Qty {txForm.type === 'Keluar' && txForm.itemId ? `(Maks: ${currentPlan[parseInt(txForm.itemId)] || 0})` : ''}
-                                            </label>
-                                            <input type="number" min="1" 
-                                                max={txForm.type === 'Keluar' && txForm.itemId ? currentPlan[parseInt(txForm.itemId)] : 9999} 
-                                                className="w-full bg-[#121212] border border-gray-700 text-white p-2 rounded" 
-                                                value={txForm.qty} onChange={e => setTxForm({...txForm, qty: e.target.value})}
-                                            />
-                                        </div>
-
-                                        <button className="w-full bg-blue-600 text-white font-bold p-3 rounded-lg">Simpan Transaksi</button>
-                                    </form>
-                                </div>
-                            )}
-                            <div className={isAdmin ? "w-2/3" : "w-full"}>
-                                <div className="flex justify-between mb-4"><h3 className="text-xl font-bold text-white">Riwayat</h3><button onClick={printTx} className="bg-blue-600 text-white px-3 py-1 rounded text-sm font-bold flex gap-2"><Printer size={16}/> Cetak</button></div>
-                                <div className="bg-[#1e1e1e] rounded-xl border border-gray-800 overflow-hidden">
-                                    <table className="w-full text-left text-sm"><thead className="bg-[#2a2a2a] text-gray-400"><tr><th className="p-3">Tgl</th><th className="p-3">Barang</th><th className="p-3">Tipe</th><th className="p-3">Ket</th><th className="p-3 text-right">Qty</th><th className="p-3 text-center">Resi</th></tr></thead><tbody className="divide-y divide-gray-800">{filteredTransactions.map(tx => <tr key={tx.id}><td className="p-3 text-gray-300">{tx.date}</td><td className="p-3 text-white font-medium">{getItemName(tx.itemId)}<br/><span className="text-xs text-gray-500">{getBrandName(tx.itemId)}</span></td><td className="p-3 text-gray-400"><span className={`px-2 py-1 rounded text-xs font-bold ${tx.type === 'Masuk' ? 'bg-green-900 text-green-400' : 'bg-orange-900 text-orange-400'}`}>{tx.type}</span></td><td className="p-3 text-gray-400">{tx.source}</td><td className="p-3 text-right font-bold text-white">{tx.qty}</td><td className="p-3 text-center">{tx.type === 'Keluar' && <button onClick={() => printReceipt(tx)} className="text-blue-400"><Printer size={16}/></button>}</td></tr>)}</tbody></table>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                );
-            };
-
-            const renderBelanjaView = () => {
-                const inbound = transactions.filter(t => t.type === 'Masuk' && t.date >= belanjaStartDate && t.date <= belanjaEndDate);
-                const total = inbound.reduce((acc, curr) => acc + (curr.price * curr.qty), 0);
-                const printBelanja = () => {
-                    const content = <><table className="w-full text-left border-collapse border border-black mb-4 text-sm"><thead><tr className="bg-gray-200"><th className="border border-black p-2">Tgl</th><th className="border border-black p-2">Barang</th><th className="border border-black p-2">Vendor</th><th className="border border-black p-2 text-center">Qty</th><th className="border border-black p-2 text-right">Total</th></tr></thead><tbody>{inbound.map(tx => <tr key={tx.id}><td className="border border-black p-2">{tx.date}</td><td className="border border-black p-2">{getItemName(tx.itemId)}</td><td className="border border-black p-2">{tx.source}</td><td className="border border-black p-2 text-center">{tx.qty}</td><td className="border border-black p-2 text-right">{formatRupiah(tx.price * tx.qty)}</td></tr>)}</tbody></table><div className="text-right font-bold text-xl border-t-2 border-black pt-2">Total: {formatRupiah(total)}</div></>;
-                    openPrintPreview('Laporan Belanja', `${belanjaStartDate} s/d ${belanjaEndDate}`, content);
-                };
-                return (
-                    <div className="animate-fade-in pb-20">
-                        <div className="flex justify-between items-center mb-6 no-print"><div><h1 className="text-2xl font-bold text-white">Laporan Belanja</h1><p className="text-gray-400 text-sm">Rekapitulasi pembelian.</p></div><div className="flex gap-2 items-center bg-[#1e1e1e] p-2 rounded-lg border border-gray-800"><input type="date" className="bg-[#121212] text-white p-1 rounded" value={belanjaStartDate} onChange={e => setBelanjaStartDate(e.target.value)}/><input type="date" className="bg-[#121212] text-white p-1 rounded" value={belanjaEndDate} onChange={e => setBelanjaEndDate(e.target.value)}/><button onClick={printBelanja} className="bg-blue-600 text-white px-3 py-1 rounded font-bold"><Printer size={16}/></button></div></div>
-                        <div className="bg-[#1e1e1e] rounded-xl border border-gray-800 overflow-hidden"><table className="w-full text-left text-sm"><thead className="bg-[#2a2a2a] text-gray-400"><tr><th className="p-3">Tgl</th><th className="p-3">Barang</th><th className="p-3">Vendor</th><th className="p-3 text-center">Qty</th><th className="p-3 text-right">Total</th></tr></thead><tbody className="divide-y divide-gray-800">{inbound.map(tx => <tr key={tx.id}><td className="p-3 text-gray-300">{tx.date}</td><td className="p-3 text-white">{getItemName(tx.itemId)}</td><td className="p-3 text-gray-400">{tx.source}</td><td className="p-3 text-center font-bold text-green-400">{tx.qty}</td><td className="p-3 text-right text-white font-bold">{formatRupiah(tx.price * tx.qty)}</td></tr>)}</tbody></table></div>
-                        <div className="mt-4 bg-[#2a2a2a] p-4 rounded-xl border border-gray-700 flex justify-end"><div className="text-right"><span className="text-md font-bold text-white mr-4">TOTAL:</span><span className="text-xl font-bold text-blue-500">{formatRupiah(total)}</span></div></div>
-                    </div>
-                );
-            };
-
-            const renderLaporanView = () => {
-                const filteredTx = transactions.filter(t => t.type === 'Keluar' && t.date >= laporanStartDate && t.date <= laporanEndDate);
-                const report = instansiList.map(inst => { const txs = filteredTx.filter(t => t.source === inst); const total = txs.reduce((acc, curr) => acc + (curr.price * curr.qty), 0); return { name: inst, transactions: txs, total }; });
-                const grandTotal = report.reduce((acc, curr) => acc + curr.total, 0);
-                const printReport = () => {
-                    const content = <>{report.map(r => (<div key={r.name} className="mb-6 border border-black p-4 break-inside-avoid"><h3 className="font-bold text-lg border-b border-black pb-2 mb-2 bg-gray-100">{r.name}</h3>{r.transactions.length > 0 ? <table className="w-full text-sm text-left"><thead><tr><th>Tgl</th><th>Barang</th><th className="text-center">Qty</th><th className="text-right">Total</th></tr></thead><tbody>{r.transactions.map(tx => <tr key={tx.id}><td>{tx.date}</td><td>{getItemName(tx.itemId)}</td><td className="text-center">{tx.qty}</td><td className="text-right">{formatRupiah(tx.price * tx.qty)}</td></tr>)}</tbody></table> : <p className="italic text-xs">Nihil</p>}<div className="text-right font-bold mt-2">Sub: {formatRupiah(r.total)}</div></div>))}<div className="text-right font-bold text-xl border-t-2 border-black pt-2">GRAND TOTAL: {formatRupiah(grandTotal)}</div></>;
-                    openPrintPreview('Laporan Distribusi', `${laporanStartDate} s/d ${laporanEndDate}`, content);
-                };
-                return (
-                    <div className="animate-fade-in pb-20">
-                        <div className="flex justify-between items-center mb-6 no-print"><div><h1 className="text-2xl font-bold text-white">Laporan Distribusi</h1><p className="text-gray-400 text-sm">Rekapitulasi per instansi.</p></div><div className="flex gap-2 items-center bg-[#1e1e1e] p-2 rounded-lg border border-gray-800"><input type="date" className="bg-[#121212] text-white p-1 rounded" value={laporanStartDate} onChange={e => setLaporanStartDate(e.target.value)}/><input type="date" className="bg-[#121212] text-white p-1 rounded" value={laporanEndDate} onChange={e => setLaporanEndDate(e.target.value)}/><button onClick={printReport} className="bg-blue-600 text-white px-3 py-1 rounded font-bold"><Printer size={16}/></button></div></div>
-                        <div className="grid grid-cols-1 gap-6">{report.map(r => (<div key={r.name} className="bg-[#1e1e1e] rounded-xl border border-gray-800 overflow-hidden"><div className="bg-[#2a2a2a] p-4 flex justify-between"><h3 className="font-bold text-white">{r.name}</h3><span className="font-bold text-orange-400">{formatRupiah(r.total)}</span></div>{r.transactions.length > 0 ? <table className="w-full text-sm text-left"><thead className="text-gray-500"><tr><th className="p-3 pl-6">Tgl</th><th className="p-3">Barang</th><th className="p-3 text-center">Qty</th><th className="p-3 text-right">Total</th></tr></thead><tbody className="divide-y divide-gray-800">{r.transactions.map(tx => <tr key={tx.id}><td className="p-3 pl-6 text-gray-400">{tx.date}</td><td className="p-3 text-white">{getItemName(tx.itemId)}</td><td className="p-3 text-center font-bold">{tx.qty}</td><td className="p-3 text-right">{formatRupiah(tx.price * tx.qty)}</td></tr>)}</tbody></table> : <div className="p-4 text-center text-gray-600 text-sm italic">Tidak ada transaksi.</div>}</div>))}</div>
-                        <div className="mt-8 bg-[#2a2a2a] p-6 rounded-xl border border-gray-700 flex justify-between"><span className="text-lg font-bold text-white">GRAND TOTAL</span><span className="text-2xl font-bold text-blue-500">{formatRupiah(grandTotal)}</span></div>
-                    </div>
-                );
-            };
-
-            const renderAdminView = () => (
-                <div className="animate-fade-in pb-20">
-                    <h1 className="text-2xl font-bold text-white mb-6">Pengaturan Admin</h1>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                        <div className="bg-[#1e1e1e] p-6 rounded-xl border border-gray-800 h-fit"><h3 className="font-bold text-white mb-4">Tambah Instansi</h3><div className="flex gap-3"><input className="flex-1 bg-[#121212] border border-gray-700 text-white px-4 py-2 rounded uppercase" placeholder="Nama Instansi" value={newInstansi} onChange={e => setNewInstansi(e.target.value)}/><button onClick={() => handleAddInstansi(newInstansi)} className="bg-blue-600 text-white px-6 py-2 rounded font-bold">Tambah</button></div></div>
-                        <div className="bg-[#1e1e1e] rounded-xl border border-gray-800 overflow-hidden"><div className="p-4 bg-[#2a2a2a] border-b border-gray-800"><h3 className="font-bold text-white">Kelola Anggaran</h3></div><div className="max-h-[500px] overflow-y-auto"><table className="w-full text-left text-sm"><thead className="bg-[#121212] text-gray-500 sticky top-0"><tr><th className="p-4">Instansi</th><th className="p-4 text-right">Pagu (Rp)</th></tr></thead><tbody className="divide-y divide-gray-800">{instansiList.map(inst => <tr key={inst} className="hover:bg-[#252525]"><td className="p-4 font-medium text-white">{inst}</td><td className="p-4 text-right"><input type="number" className="bg-[#121212] border border-gray-700 text-white px-2 py-1 rounded text-right w-32" value={budgets[inst]} onChange={e => handleUpdateBudget(inst, e.target.value)}/></td></tr>)}</tbody></table></div></div>
-                    </div>
-                </div>
-            );
-
-            // --- VIEW LOGIN ---
-            if (!currentUser) {
-                return (
-                    <div className="flex h-screen w-full items-center justify-center bg-[#121212]">
-                        <div className="w-full max-w-md p-8 bg-[#1e1e1e] border border-gray-800 rounded-2xl shadow-2xl animate-fade-in-up">
-                            <div className="flex justify-center mb-6"><div className="bg-white p-2 rounded-full shadow-lg h-24 w-24 flex items-center justify-center overflow-hidden border-4 border-blue-500/20"><div className="text-center font-black leading-none text-black"><span className="block text-sm">PT.</span><span className="block text-xl">KSLS</span></div></div></div>
-                            <h2 className="text-2xl font-bold text-center text-white mb-2">{COMPANY_NAME}</h2>
-                            <p className="text-center text-gray-400 mb-8 text-sm">Silakan masuk di stok gudang</p>
-                            <form onSubmit={handleLogin} className="space-y-4">
-                                <div><label className="block text-xs font-bold text-gray-500 uppercase mb-2">Username</label><div className="relative"><UserCircle className="absolute left-3 top-2.5 text-gray-500" size={18}/><input autoFocus type="text" className="w-full bg-[#121212] border border-gray-700 text-white p-3 pl-10 rounded-xl" value={loginForm.username} onChange={e => setLoginForm({...loginForm, username: e.target.value})}/></div></div>
-                                <div><label className="block text-xs font-bold text-gray-500 uppercase mb-2">Password</label><div className="relative"><Lock className="absolute left-3 top-2.5 text-gray-500" size={18}/><input type="password" className="w-full bg-[#121212] border border-gray-700 text-white p-3 pl-10 rounded-xl" value={loginForm.password} onChange={e => setLoginForm({...loginForm, password: e.target.value})}/></div></div>
-                                {loginError && <div className="bg-red-500/10 text-red-400 p-3 rounded-lg text-sm flex gap-2"><AlertCircle size={16}/> {loginError}</div>}
-                                <button className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3.5 rounded-xl shadow-lg mt-4">Masuk Sistem</button>
-                            </form>
-                        </div>
-                    </div>
-                );
-            }
-
-            // --- VIEW MAIN APP ---
-            return (
-                <div className="flex h-screen bg-[#121212] text-white font-sans overflow-hidden">
-                    <aside className={`fixed inset-y-0 left-0 z-40 w-72 bg-[#1e1e1e]/95 backdrop-blur-xl border-r border-gray-800/50 flex flex-col h-full transition-transform duration-300 ease-in-out md:translate-x-0 md:static shadow-2xl ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}>
-                        <div className="p-8 pb-4 flex items-center gap-4"><div className="bg-gradient-to-br from-blue-600 to-purple-600 p-3 rounded-2xl"><Package size={28} className="text-white"/></div><div><h1 className="text-lg font-bold leading-tight text-white">PT. KSLS</h1><p className="text-xs text-gray-400">Gudang Pusat</p></div></div>
-                        <nav className="flex-1 px-4 py-6 space-y-1 overflow-y-auto">
-                            <SidebarItem icon={LayoutDashboard} label="Dashboard" active={activeMenu === 'Dashboard'} onClick={() => { setActiveMenu('Dashboard'); setIsSidebarOpen(false); }}/>
-                            <div className="pt-4 pb-2 px-4 text-xs font-bold text-gray-500 uppercase">Operasional</div>
-                            <SidebarItem icon={Package} label="Stok Barang" active={activeMenu === 'Stok Barang'} onClick={() => { setActiveMenu('Stok Barang'); setIsSidebarOpen(false); }}/>
-                            <SidebarItem icon={ShoppingCart} label="Perencanaan" active={activeMenu === 'Perencanaan'} onClick={() => { setActiveMenu('Perencanaan'); setIsSidebarOpen(false); }}/>
-                            <SidebarItem icon={History} label="Transaksi" active={activeMenu === 'Transaksi Harian'} onClick={() => { setActiveMenu('Transaksi Harian'); setIsSidebarOpen(false); }}/>
-                            <div className="pt-4 pb-2 px-4 text-xs font-bold text-gray-500 uppercase">Laporan</div>
-                            <SidebarItem icon={Wallet} label="Belanja" active={activeMenu === 'Belanja Bulanan'} onClick={() => { setActiveMenu('Belanja Bulanan'); setIsSidebarOpen(false); }}/>
-                            <SidebarItem icon={FileText} label="Laporan Distribusi" active={activeMenu === 'Laporan Bulanan'} onClick={() => { setActiveMenu('Laporan Bulanan'); setIsSidebarOpen(false); }}/>
-                        </nav>
-                        <div className="p-4 border-t border-gray-800/50">
-                            {isAdmin && <SidebarItem icon={Settings} label="Admin" active={activeMenu === 'Pengaturan Admin'} onClick={() => { if(isAdminAuthenticated) setActiveMenu('Pengaturan Admin'); else setShowAdminLogin(true); setIsSidebarOpen(false); }}/>}
-                            <button onClick={handleLogout} className="flex items-center gap-3 px-4 py-3 mt-1 text-red-400 hover:bg-red-500/10 w-full rounded-xl transition-all font-medium text-sm"><LogOut size={18}/><span>Keluar</span></button>
-                        </div>
-                    </aside>
-                    
-                    {/* Mobile Overlay */}
-                    {isSidebarOpen && <div className="fixed inset-0 bg-black/50 z-30 md:hidden" onClick={() => setIsSidebarOpen(false)}></div>}
-
-                    <div className="flex-1 flex flex-col overflow-hidden relative bg-[#121212]">
-                        <header className="h-20 flex justify-between items-center px-6 md:px-8 border-b border-gray-800/50 bg-[#121212]/90 backdrop-blur-sm z-20 shrink-0 no-print">
-                           <div className="flex items-center gap-3">
-                               <button className="md:hidden text-gray-400 hover:text-white" onClick={() => setIsSidebarOpen(true)}><Menu size={24}/></button>
-                               <div><h2 className="text-xl font-bold text-white">{activeMenu}</h2><p className="text-xs text-gray-500 mt-0.5 hidden md:block">{new Date().toLocaleDateString('id-ID', { dateStyle: 'full' })} | {currentUser?.name}</p></div>
-                           </div>
-                           {(activeMenu === 'Perencanaan' || activeMenu === 'Transaksi Harian') && (
-                                <div className="relative">
-                                    <button onClick={() => setIsInstansiMenuOpen(!isInstansiMenuOpen)} className="flex items-center gap-3 bg-[#1e1e1e] border border-gray-800 text-white px-4 py-2 rounded-full shadow-lg text-sm"><div className="bg-blue-500/20 p-1 rounded-full"><Users size={14} className="text-blue-400"/></div><div className="text-left mr-1 hidden sm:block"><span className="block text-[10px] text-gray-400 font-bold uppercase">Instansi Aktif</span><span className="block text-xs font-bold leading-none">{selectedInstansi}</span></div><ChevronDown size={14}/></button>
-                                    {isInstansiMenuOpen && <div className="absolute top-full right-0 mt-3 w-48 bg-[#1e1e1e] border border-gray-700 rounded-2xl shadow-2xl z-50 overflow-hidden"><div className="p-2">{instansiList.map(inst => <button key={inst} onClick={() => { setSelectedInstansi(inst); setIsInstansiMenuOpen(false); }} className={`w-full text-left px-4 py-3 rounded-xl text-sm font-medium flex justify-between ${selectedInstansi === inst ? 'bg-blue-600 text-white' : 'text-gray-300 hover:bg-[#2a2a2a]'}`}>{inst}{selectedInstansi === inst && <Check size={16}/>}</button>)}</div></div>}
-                                </div>
-                            )}
-                        </header>
-                        <main className="flex-1 overflow-auto p-4 md:p-10 scroll-smooth">
-                            {activeMenu === 'Dashboard' && renderDashboardView()}
-                            {activeMenu === 'Stok Barang' && renderStokBarangView()}
-                            {activeMenu === 'Perencanaan' && renderPerencanaanView()}
-                            {activeMenu === 'Transaksi Harian' && renderTransaksiHarianView()}
-                            {activeMenu === 'Belanja Bulanan' && renderBelanjaView()}
-                            {activeMenu === 'Laporan Bulanan' && renderLaporanView()}
-                            {activeMenu === 'Pengaturan Admin' && isAdmin && renderAdminView()}
-                        </main>
-                    </div>
-                    {showAdminLogin && (
-                        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/80 p-4">
-                            <div className="bg-[#1e1e1e] border border-red-500/30 rounded-2xl w-full max-w-sm p-8">
-                                <div className="text-center mb-6"><h3 className="text-2xl font-bold text-white">Akses Terbatas</h3><p className="text-sm text-gray-400">Verifikasi Admin</p></div>
-                                <form onSubmit={handleAdminLogin} className="space-y-4">
-                                    <input autoFocus type="password" className="w-full bg-[#121212] border border-gray-700 text-white p-3 rounded-xl" placeholder="Password Admin" value={passwordInput} onChange={e => setPasswordInput(e.target.value)}/>
-                                    <div className="grid grid-cols-2 gap-3"><button type="button" onClick={() => { setShowAdminLogin(false); setPasswordInput(''); }} className="px-4 py-3 rounded-xl border border-gray-700 text-gray-400">Batal</button><button className="px-4 py-3 rounded-xl bg-red-600 text-white font-bold">Masuk</button></div>
-                                </form>
-                            </div>
-                        </div>
-                    )}
-                    {previewData && <ReportPreviewModal {...previewData} onClose={() => setPreviewData(null)} onPrint={triggerPrint} userName={currentUser?.name} />}
-                </div>
-            );
+  // Get Location
+  const getLocation = () => {
+    if (navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(
+        (position) => {
+          setLocation({
+            lat: position.coords.latitude,
+            lng: position.coords.longitude
+          });
+          setLocationError(null);
+        },
+        (error) => {
+          setLocationError("Gagal mendapatkan lokasi. Pastikan GPS aktif.");
         }
-        
-        const root = ReactDOM.createRoot(document.getElementById('root'));
-        root.render(<App />);
-    </script>
-</body>
-</html>
+      );
+    } else {
+      setLocationError("Browser tidak mendukung Geolocation.");
+    }
+  };
+
+  useEffect(() => {
+    if (activeTab === 'absen') {
+      getLocation();
+    }
+  }, [activeTab]);
+
+  const handleSubmitAttendance = (type) => {
+    if (!location) return alert("Menunggu lokasi...");
+    if (!photo && (type === 'Masuk' || type === 'Istirahat' || type === 'Pulang')) return alert("Wajib foto selfie!");
+
+    const newLog = {
+      id: Date.now(),
+      userId: user.id,
+      name: user.name,
+      type: type,
+      timestamp: new Date().toISOString(),
+      location: `${location.lat.toFixed(4)}, ${location.lng.toFixed(4)}`,
+      photo: photo,
+      status: 'Hadir'
+    };
+
+    setLogs([newLog, ...logs]);
+    setPhoto(null);
+    alert(`Absen ${type} Berhasil!`);
+  };
+
+  return (
+    <div className="max-w-2xl mx-auto space-y-6">
+      
+      {/* Welcome Card */}
+      <div className="bg-gradient-to-r from-blue-600 to-indigo-600 rounded-2xl p-6 text-white shadow-lg">
+        <h2 className="text-2xl font-bold">Halo, {user.name} 👋</h2>
+        <p className="opacity-90 mt-1">{user.department} Department</p>
+        <div className="mt-6 flex gap-4 text-sm bg-white/10 p-3 rounded-lg backdrop-blur-sm">
+           <div className="flex items-center gap-2">
+              <Clock size={16} />
+              <span>{new Date().toLocaleTimeString('id-ID', {hour: '2-digit', minute:'2-digit'})}</span>
+           </div>
+           <div className="h-4 w-px bg-white/30"></div>
+           <div className="flex items-center gap-2">
+              <Calendar size={16} />
+              <span>{new Date().toLocaleDateString('id-ID', { weekday: 'long', day: 'numeric', month: 'short' })}</span>
+           </div>
+        </div>
+      </div>
+
+      {/* Action Grid */}
+      <div className="grid grid-cols-3 gap-3">
+          <button onClick={() => setActiveTab('absen')} className={`p-4 rounded-xl flex flex-col items-center gap-2 transition ${activeTab === 'absen' ? 'bg-blue-100 text-blue-700 ring-2 ring-blue-500' : 'bg-white shadow-sm text-gray-600'}`}>
+              <Camera />
+              <span className="text-xs font-bold">Absen</span>
+          </button>
+          <button onClick={() => setActiveTab('history')} className={`p-4 rounded-xl flex flex-col items-center gap-2 transition ${activeTab === 'history' ? 'bg-blue-100 text-blue-700 ring-2 ring-blue-500' : 'bg-white shadow-sm text-gray-600'}`}>
+              <Clock />
+              <span className="text-xs font-bold">Riwayat</span>
+          </button>
+          <button onClick={() => setActiveTab('permit')} className={`p-4 rounded-xl flex flex-col items-center gap-2 transition ${activeTab === 'permit' ? 'bg-blue-100 text-blue-700 ring-2 ring-blue-500' : 'bg-white shadow-sm text-gray-600'}`}>
+              <FileText />
+              <span className="text-xs font-bold">Izin/Cuti</span>
+          </button>
+      </div>
+
+      {/* Main Feature Area */}
+      {activeTab === 'absen' && (
+        <Card className="space-y-6">
+           {/* Location Status */}
+           <div className="flex items-center justify-between bg-gray-50 p-3 rounded-lg">
+               <div className="flex items-center gap-3">
+                   <div className={`w-8 h-8 rounded-full flex items-center justify-center ${location ? 'bg-green-100 text-green-600' : 'bg-red-100 text-red-600'}`}>
+                       <MapPin size={16} />
+                   </div>
+                   <div>
+                       <p className="text-xs text-gray-500 font-medium">Lokasi Anda</p>
+                       <p className="text-sm font-bold text-gray-800">
+                           {location ? `${location.lat.toFixed(4)}, ${location.lng.toFixed(4)}` : 'Mencari lokasi...'}
+                       </p>
+                   </div>
+               </div>
+               {location && <Badge type="success">Akurat</Badge>}
+           </div>
+
+           {/* Camera Preview */}
+           <div className="relative bg-black rounded-xl overflow-hidden aspect-[4/3] flex items-center justify-center">
+              {!isCameraOpen && !photo && (
+                <div className="text-center">
+                    <p className="text-gray-400 mb-4 text-sm">Kamera belum aktif</p>
+                    <Button onClick={startCamera} variant="outline" className="bg-white/10 text-white border-white/20 hover:bg-white/20">Buka Kamera</Button>
+                </div>
+              )}
+              
+              {isCameraOpen && (
+                  <video ref={videoRef} autoPlay playsInline className="w-full h-full object-cover"></video>
+              )}
+              
+              {photo && (
+                  <img src={photo} alt="Captured" className="w-full h-full object-cover" />
+              )}
+
+              {/* Camera Controls */}
+              {isCameraOpen && (
+                  <div className="absolute bottom-4 left-0 right-0 flex justify-center">
+                      <button onClick={takePhoto} className="w-16 h-16 bg-white rounded-full border-4 border-gray-300 flex items-center justify-center shadow-lg active:scale-95 transition">
+                          <div className="w-12 h-12 bg-red-500 rounded-full"></div>
+                      </button>
+                  </div>
+              )}
+           </div>
+            
+           {/* Action Buttons */}
+           {photo && (
+               <div className="flex flex-col gap-3">
+                   <Button variant="success" onClick={() => handleSubmitAttendance('Masuk')}>Absen Masuk</Button>
+                   <Button variant="warning" onClick={() => handleSubmitAttendance('Istirahat')}>Absen Istirahat</Button>
+                   <Button variant="danger" onClick={() => handleSubmitAttendance('Pulang')}>Absen Pulang</Button>
+               </div>
+           )}
+
+           {photo && (
+               <Button variant="outline" className="w-full" onClick={() => setPhoto(null)}>Foto Ulang</Button>
+           )}
+        </Card>
+      )}
+
+      {activeTab === 'history' && (
+          <div className="space-y-4">
+              <h3 className="font-bold text-gray-700">Riwayat Bulan Ini</h3>
+              {myLogs.length === 0 ? (
+                  <div className="text-center py-8 text-gray-500 bg-white rounded-xl border border-dashed">
+                      Belum ada riwayat absensi.
+                  </div>
+              ) : (
+                  myLogs.map(log => (
+                      <div key={log.id} className="bg-white p-4 rounded-xl shadow-sm border flex items-center gap-4">
+                          <div className={`w-12 h-12 rounded-full flex items-center justify-center shrink-0 ${log.type === 'Masuk' ? 'bg-green-100 text-green-600' : log.type === 'Istirahat' ? 'bg-yellow-100 text-yellow-600' : 'bg-red-100 text-red-600'}`}>
+                              {log.type === 'Masuk' ? <LogOut className="rotate-180" size={20} /> : log.type === 'Istirahat' ? <Coffee size={20} /> : <LogOut size={20} />}
+                          </div>
+                          <div className="flex-1">
+                              <h4 className="font-bold text-gray-800">{log.type}</h4>
+                              <p className="text-xs text-gray-500">{formatDate(log.timestamp)}</p>
+                              <p className="text-xs text-gray-400 mt-1 flex items-center gap-1"><MapPin size={10}/> {log.location}</p>
+                          </div>
+                          {log.photo && (
+                              <img src={log.photo} className="w-12 h-12 rounded-lg object-cover border" alt="Proof" />
+                          )}
+                      </div>
+                  ))
+              )}
+          </div>
+      )}
+
+      {/* Pengumuman Widget */}
+      <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-4">
+          <div className="flex items-center gap-2 mb-2 text-yellow-800 font-bold">
+              <Bell size={18} />
+              <h4>Pengumuman Kantor</h4>
+          </div>
+          <ul className="space-y-3">
+              {announcements.slice(0, 2).map(ann => (
+                  <li key={ann.id} className="text-sm border-b border-yellow-200 pb-2 last:border-0 last:pb-0">
+                      <p className="font-semibold text-gray-800">{ann.title}</p>
+                      <p className="text-gray-600">{ann.content}</p>
+                  </li>
+              ))}
+          </ul>
+      </div>
+
+      <canvas ref={canvasRef} className="hidden"></canvas>
+    </div>
+  );
+}
