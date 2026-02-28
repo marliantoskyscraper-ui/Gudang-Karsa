@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="description" content="Aplikasi Absensi Digital Berbasis Lokasi dan Foto">
-    <title>Aplikasi Absensi Digital</title>
+    <title>Aplikasi Absensi Digital (Cloud Version)</title>
     
     <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
@@ -18,12 +18,34 @@
     
     <!-- Babel -->
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+    <!-- Map Firebase Imports -->
+    <script type="importmap">
+      {
+        "imports": {
+          "firebase/app": "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js",
+          "firebase/auth": "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js",
+          "firebase/firestore": "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js"
+        }
+      }
+    </script>
 </head>
 <body class="bg-slate-100 antialiased">
     <div id="root"></div>
 
-    <script type="text/babel">
+    <script type="text/babel" data-type="module">
+        import { initializeApp } from 'firebase/app';
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from 'firebase/auth';
+        import { getFirestore, collection, onSnapshot, addDoc, updateDoc, doc, setDoc, deleteDoc, getDocs } from 'firebase/firestore';
+
         const { useState, useEffect, useRef } = React;
+
+        // --- INISIALISASI CLOUD DATABASE ---
+        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        const db = getFirestore(app);
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-absensi-app';
 
         // --- DATA DUMMY AKUN ---
         const initialUsers = [
@@ -32,39 +54,134 @@
           { id: 99, username: 'admin', password: 'admin', name: 'Admin Pusat', role: 'admin' }
         ];
 
-        // --- FUNGSI HELPER (Hitung Jarak GPS) ---
+        // --- FUNGSI HELPER ---
         function getDistanceFromLatLonInM(lat1, lon1, lat2, lon2) {
           const R = 6371000; 
           const dLat = deg2rad(lat2 - lat1);
           const dLon = deg2rad(lon2 - lon1);
-          const a =
-            Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-            Math.cos(deg2rad(lat1)) * Math.cos(deg2rad(lat2)) *
-            Math.sin(dLon / 2) * Math.sin(dLon / 2);
+          const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) + Math.cos(deg2rad(lat1)) * Math.cos(deg2rad(lat2)) * Math.sin(dLon / 2) * Math.sin(dLon / 2);
           const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
           return Math.round(R * c); 
         }
         function deg2rad(deg) { return deg * (Math.PI / 180); }
 
+        // Fungsi Export CSV
+        function exportToCSV(data, filename) {
+            if (data.length === 0) return;
+            // Filter out base64 photos and internal IDs from export
+            const cleanData = data.map(({ dbId, photo, ...rest }) => rest);
+            const headers = Object.keys(cleanData[0]).join(',');
+            const rows = cleanData.map(obj => Object.values(obj).map(val => `"${val}"`).join(',')).join('\n');
+            const csv = headers + '\n' + rows;
+            const blob = new Blob([csv], { type: 'text/csv' });
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url; a.download = filename; a.click();
+        }
+
         // --- KOMPONEN UTAMA ---
         function AbsensiApp() {
           const [currentUser, setCurrentUser] = useState(null); 
-          
-          // State dengan LocalStorage agar data tidak hilang saat refresh
-          const [logs, setLogs] = useState(() => JSON.parse(localStorage.getItem('absen_logs')) || []);
-          const [requests, setRequests] = useState(() => JSON.parse(localStorage.getItem('absen_reqs')) || []);
-          const [reports, setReports] = useState(() => JSON.parse(localStorage.getItem('absen_reps')) || []);
-          const [officeLoc, setOfficeLoc] = useState(() => JSON.parse(localStorage.getItem('absen_loc')) || { lat: -6.200000, lng: 106.816666 });
+          const [firebaseUser, setFirebaseUser] = useState(null);
+          const [dbStatus, setDbStatus] = useState('Menghubungkan ke Cloud...');
+          const [toastMsg, setToastMsg] = useState('');
 
+          // Data State (Cloud Sync)
+          const [logs, setLogs] = useState([]);
+          const [requests, setRequests] = useState([]);
+          const [reports, setReports] = useState([]);
+          const [officeLoc, setOfficeLoc] = useState({ lat: -6.200000, lng: 106.816666 });
           const MAX_DISTANCE_METERS = 100;
 
-          // Efek untuk menyimpan data ke LocalStorage setiap ada perubahan
-          useEffect(() => { localStorage.setItem('absen_logs', JSON.stringify(logs)); }, [logs]);
-          useEffect(() => { localStorage.setItem('absen_reqs', JSON.stringify(requests)); }, [requests]);
-          useEffect(() => { localStorage.setItem('absen_reps', JSON.stringify(reports)); }, [reports]);
-          useEffect(() => { localStorage.setItem('absen_loc', JSON.stringify(officeLoc)); }, [officeLoc]);
+          // Autentikasi Cloud Setup
+          useEffect(() => {
+            const initAuth = async () => {
+              try {
+                if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                  await signInWithCustomToken(auth, __initial_auth_token);
+                } else {
+                  await signInAnonymously(auth);
+                }
+              } catch (error) {
+                console.error("Auth error:", error);
+                setDbStatus('Gagal terhubung ke Cloud');
+              }
+            };
+            initAuth();
+            const unsubscribe = onAuthStateChanged(auth, (user) => {
+               setFirebaseUser(user);
+               if(user) setDbStatus('Cloud Database Terhubung');
+            });
+            return () => unsubscribe();
+          }, []);
 
-          // State Form Login
+          // Sinkronisasi Data Real-time (Hanya berjalan jika sudah auth)
+          useEffect(() => {
+            if (!firebaseUser) return;
+
+            // Paths
+            const logsRef = collection(db, 'artifacts', appId, 'public', 'data', 'logs');
+            const reqRef = collection(db, 'artifacts', appId, 'public', 'data', 'requests');
+            const repRef = collection(db, 'artifacts', appId, 'public', 'data', 'reports');
+            const setRef = collection(db, 'artifacts', appId, 'public', 'data', 'settings');
+
+            const unsubLogs = onSnapshot(logsRef, (snap) => {
+              const data = snap.docs.map(doc => ({ dbId: doc.id, ...doc.data() }));
+              setLogs(data.sort((a,b) => b.timestamp - a.timestamp)); // Urutkan terbaru
+            }, (err) => console.error(err));
+
+            const unsubReqs = onSnapshot(reqRef, (snap) => {
+              const data = snap.docs.map(doc => ({ dbId: doc.id, ...doc.data() }));
+              setRequests(data.sort((a,b) => b.timestamp - a.timestamp));
+            }, (err) => console.error(err));
+
+            const unsubReps = onSnapshot(repRef, (snap) => {
+              const data = snap.docs.map(doc => ({ dbId: doc.id, ...doc.data() }));
+              setReports(data.sort((a,b) => b.timestamp - a.timestamp));
+            }, (err) => console.error(err));
+
+            const unsubSet = onSnapshot(setRef, (snap) => {
+              const locDoc = snap.docs.find(d => d.id === 'office_location');
+              if (locDoc) setOfficeLoc(locDoc.data());
+            }, (err) => console.error(err));
+
+            return () => { unsubLogs(); unsubReqs(); unsubReps(); unsubSet(); };
+          }, [firebaseUser]);
+
+          // Fungsi Tulis ke Database
+          const showToast = (msg) => { setToastMsg(msg); setTimeout(() => setToastMsg(''), 3000); };
+
+          const handleAddLog = async (log) => {
+             await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'logs'), { ...log, timestamp: Date.now() });
+             showToast("Absen berhasil disimpan ke Cloud!");
+          };
+          const handleAddRequest = async (req) => {
+             await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'requests'), { ...req, timestamp: Date.now() });
+             showToast("Pengajuan berhasil dikirim ke Admin!");
+          };
+          const handleAddReport = async (rep) => {
+             await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'reports'), { ...rep, timestamp: Date.now() });
+             showToast("Laporan disimpan ke Cloud!");
+          };
+          const handleUpdateReqStatus = async (dbId, status) => {
+             await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'requests', dbId), { status });
+             showToast("Status pengajuan diperbarui.");
+          };
+          const handleUpdateLoc = async (newLoc) => {
+             await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'office_location'), newLoc);
+             showToast("Lokasi Kantor Pusat berhasil diperbarui.");
+          };
+          const handleClearAllLogs = async () => {
+             // Simulasi hapus semua log (di production sebaiknya di-batch)
+             showToast("Mulai menghapus data log...");
+             const snapshot = await getDocs(collection(db, 'artifacts', appId, 'public', 'data', 'logs'));
+             snapshot.forEach(async (document) => {
+                await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'logs', document.id));
+             });
+             showToast("Data log absensi dibersihkan!");
+          };
+
+          // --- UI LOGIN ---
           const [username, setUsername] = useState('');
           const [password, setPassword] = useState('');
           const [loginError, setLoginError] = useState('');
@@ -75,8 +192,7 @@
             if (user) {
               setCurrentUser(user);
               setLoginError('');
-              setUsername('');
-              setPassword('');
+              setUsername(''); setPassword('');
             } else {
               setLoginError('Username atau password salah!');
             }
@@ -84,71 +200,75 @@
 
           if (!currentUser) {
             return (
-              <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
-                <div className="max-w-md w-full bg-white rounded-2xl shadow-xl overflow-hidden">
-                  <div className="bg-blue-600 p-6 text-center">
-                    <i className="fas fa-shield-alt text-6xl text-white mx-auto mb-2 block"></i>
-                    <h1 className="text-2xl font-bold text-white mt-2">Sistem Absensi Digital</h1>
-                    <p className="text-blue-100 mt-1">Aman, Cerdas, Real-time</p>
+              <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-4">
+                <div className="max-w-md w-full bg-white rounded-2xl shadow-xl overflow-hidden mb-4">
+                  <div className="bg-blue-600 p-6 text-center relative overflow-hidden">
+                    <div className="absolute top-0 right-0 -mt-4 -mr-4 w-24 h-24 bg-white opacity-10 rounded-full blur-xl"></div>
+                    <i className="fas fa-cloud text-5xl text-white mx-auto mb-3 block drop-shadow-md"></i>
+                    <h1 className="text-2xl font-bold text-white leading-tight">Absensi Cloud</h1>
+                    <p className="text-blue-100 mt-1 text-sm font-medium tracking-wide">Tersinkronisasi Real-time</p>
                   </div>
                   <div className="p-6 space-y-4">
                     <h2 className="text-gray-700 font-semibold text-center mb-4">Silakan Login</h2>
                     
-                    {loginError && (
-                      <div className="bg-red-50 text-red-600 p-3 rounded-lg text-sm text-center border border-red-200 animate-pulse">
-                        {loginError}
-                      </div>
-                    )}
+                    {loginError && <div className="bg-red-50 text-red-600 p-3 rounded-lg text-sm text-center border border-red-200 animate-pulse">{loginError}</div>}
 
                     <form onSubmit={handleLogin} className="space-y-4">
                       <div>
                         <label className="block text-sm font-medium text-gray-700 mb-1">Username</label>
-                        <input type="text" required value={username} onChange={(e) => setUsername(e.target.value)} className="w-full border-gray-300 rounded-xl shadow-sm focus:border-blue-500 focus:ring-blue-500 bg-gray-50 p-3 outline-none border" placeholder="Masukkan username..." />
+                        <input type="text" required value={username} onChange={(e) => setUsername(e.target.value)} className="w-full border-gray-300 rounded-xl shadow-sm focus:border-blue-500 focus:ring-blue-500 bg-gray-50 p-3 outline-none border transition-all" placeholder="Masukkan username..." />
                       </div>
                       <div>
                         <label className="block text-sm font-medium text-gray-700 mb-1">Password</label>
-                        <input type="password" required value={password} onChange={(e) => setPassword(e.target.value)} className="w-full border-gray-300 rounded-xl shadow-sm focus:border-blue-500 focus:ring-blue-500 bg-gray-50 p-3 outline-none border" placeholder="Masukkan password..." />
+                        <input type="password" required value={password} onChange={(e) => setPassword(e.target.value)} className="w-full border-gray-300 rounded-xl shadow-sm focus:border-blue-500 focus:ring-blue-500 bg-gray-50 p-3 outline-none border transition-all" placeholder="Masukkan password..." />
                       </div>
-                      <button type="submit" className="w-full py-3 px-4 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-xl flex items-center justify-center transition-colors mt-2">
-                        Masuk
+                      <button type="submit" className="w-full py-3 px-4 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl flex items-center justify-center transition-colors mt-2 shadow-md hover:shadow-lg">
+                        MASUK APLIKASI
                       </button>
                     </form>
 
                     <div className="mt-6 pt-4 border-t border-gray-100 text-sm text-gray-500">
-                      <p className="font-semibold mb-2">Info Akun Demo:</p>
+                      <p className="font-semibold mb-2">Pilih Akun Demo:</p>
                       <div className="grid grid-cols-2 gap-2 text-xs">
-                        <div className="bg-gray-50 p-2 rounded border">
-                          <span className="block font-semibold text-gray-700">Pegawai</span>
-                          user: <span className="font-mono">budi</span><br/>
-                          pass: <span className="font-mono">123</span>
+                        <div onClick={()=>{setUsername('budi');setPassword('123');}} className="bg-gray-50 p-2 rounded-lg border border-gray-200 cursor-pointer hover:bg-blue-50 hover:border-blue-200 transition-colors">
+                          <span className="block font-bold text-gray-700 mb-1">Pegawai</span>
+                          user: <span className="font-mono text-blue-600">budi</span><br/>pass: <span className="font-mono text-blue-600">123</span>
                         </div>
-                        <div className="bg-gray-50 p-2 rounded border">
-                          <span className="block font-semibold text-gray-700">Admin</span>
-                          user: <span className="font-mono">admin</span><br/>
-                          pass: <span className="font-mono">admin</span>
+                        <div onClick={()=>{setUsername('admin');setPassword('admin');}} className="bg-gray-50 p-2 rounded-lg border border-gray-200 cursor-pointer hover:bg-blue-50 hover:border-blue-200 transition-colors">
+                          <span className="block font-bold text-gray-700 mb-1">Admin</span>
+                          user: <span className="font-mono text-blue-600">admin</span><br/>pass: <span className="font-mono text-blue-600">admin</span>
                         </div>
                       </div>
                     </div>
                   </div>
-                  <div className="bg-gray-50 text-center p-4 text-xs text-gray-400 flex justify-center items-center">
-                    <i className="fas fa-database mr-1"></i> Data Tersimpan di Browser (Local)
-                  </div>
+                </div>
+                <div className={`text-xs px-4 py-2 rounded-full flex items-center font-medium ${dbStatus.includes('Terhubung') ? 'bg-green-100 text-green-700' : 'bg-yellow-100 text-yellow-700'}`}>
+                   <i className={`fas ${dbStatus.includes('Terhubung') ? 'fa-check-circle' : 'fa-spinner fa-spin'} mr-2`}></i> {dbStatus}
                 </div>
               </div>
             );
           }
 
+          // Global Toast Notification
+          const ToastUI = () => toastMsg ? (
+            <div className="fixed top-4 left-1/2 transform -translate-x-1/2 bg-gray-900 text-white px-6 py-3 rounded-full shadow-2xl z-50 flex items-center text-sm font-medium animate-bounce">
+              <i className="fas fa-info-circle mr-2 text-blue-400"></i> {toastMsg}
+            </div>
+          ) : null;
+
           return (
             <div className="min-h-screen bg-slate-100">
+              <ToastUI />
               {currentUser.role === 'employee' ? (
                 <EmployeeDashboard 
                   user={currentUser} 
                   onLogout={() => setCurrentUser(null)} 
                   officeLoc={officeLoc}
                   maxDist={MAX_DISTANCE_METERS}
-                  addLog={(log) => setLogs([log, ...logs])}
-                  addRequest={(req) => setRequests([req, ...requests])}
-                  addReport={(rep) => setReports([rep, ...reports])}
+                  addLog={handleAddLog}
+                  addRequest={handleAddRequest}
+                  addReport={handleAddReport}
+                  showToast={showToast}
                 />
               ) : (
                 <AdminDashboard 
@@ -158,14 +278,12 @@
                   requests={requests}
                   reports={reports}
                   officeLoc={officeLoc}
-                  setOfficeLoc={setOfficeLoc}
-                  clearData={() => {
-                     if(window.confirm("Yakin ingin menghapus SEMUA data absensi?")) {
-                         setLogs([]); setRequests([]); setReports([]);
-                     }
-                  }}
-                  updateRequestStatus={(id, status) => {
-                    setRequests(requests.map(r => r.id === id ? { ...r, status } : r));
+                  setOfficeLoc={handleUpdateLoc}
+                  clearLogs={handleClearAllLogs}
+                  updateRequestStatus={handleUpdateReqStatus}
+                  exportData={() => {
+                     exportToCSV(logs, `Data_Absensi_${new Date().toLocaleDateString('id-ID')}.csv`);
+                     showToast("File Excel (CSV) Absensi Berhasil Diunduh!");
                   }}
                 />
               )}
@@ -174,35 +292,36 @@
         }
 
         // --- DASHBOARD PEGAWAI ---
-        function EmployeeDashboard({ user, onLogout, officeLoc, maxDist, addLog, addRequest, addReport }) {
+        function EmployeeDashboard({ user, onLogout, officeLoc, maxDist, addLog, addRequest, addReport, showToast }) {
           const [activeTab, setActiveTab] = useState('absen');
 
           return (
             <div className="max-w-md mx-auto bg-white min-h-screen shadow-md flex flex-col relative">
-              <div className="bg-blue-600 text-white p-5 rounded-b-3xl shadow-lg z-10">
-                <div className="flex justify-between items-center mb-4">
+              <div className="bg-blue-600 text-white p-5 rounded-b-3xl shadow-lg z-10 relative overflow-hidden">
+                <div className="absolute top-0 right-0 w-32 h-32 bg-white opacity-5 rounded-full blur-2xl -mr-10 -mt-10"></div>
+                <div className="flex justify-between items-center mb-4 relative z-10">
                   <div>
                     <h2 className="text-xl font-bold">{user.name}</h2>
                     <p className="text-blue-200 text-sm">{user.department}</p>
                   </div>
-                  <button onClick={onLogout} className="p-2 bg-blue-700 rounded-full hover:bg-blue-800 transition-colors">
-                    <i className="fas fa-sign-out-alt text-xl"></i>
+                  <button onClick={onLogout} className="w-10 h-10 bg-blue-700/50 rounded-full flex items-center justify-center hover:bg-blue-800 transition-colors">
+                    <i className="fas fa-sign-out-alt"></i>
                   </button>
                 </div>
-                <div className="bg-white/20 rounded-xl p-3 flex items-center">
-                  <i className="fas fa-clock text-xl mr-2"></i>
-                  <span className="font-medium text-lg">{new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}</span>
-                  <span className="ml-auto text-sm bg-blue-500 px-2 py-1 rounded-md">{new Date().toLocaleDateString('id-ID', { weekday: 'short', day: 'numeric', month: 'short' })}</span>
+                <div className="bg-white/10 rounded-xl p-3 flex items-center relative z-10 border border-white/20 shadow-inner">
+                  <i className="fas fa-clock text-xl mr-2 text-blue-100"></i>
+                  <span className="font-medium text-lg tracking-wider">{new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}</span>
+                  <span className="ml-auto text-xs bg-white text-blue-700 font-bold px-3 py-1.5 rounded-lg shadow-sm">{new Date().toLocaleDateString('id-ID', { weekday: 'short', day: 'numeric', month: 'short' })}</span>
                 </div>
               </div>
 
-              <div className="flex-1 p-5 overflow-y-auto pb-24">
-                {activeTab === 'absen' && <TabAbsen user={user} officeLoc={officeLoc} maxDist={maxDist} addLog={addLog} />}
+              <div className="flex-1 p-5 overflow-y-auto pb-24 bg-slate-50">
+                {activeTab === 'absen' && <TabAbsen user={user} officeLoc={officeLoc} maxDist={maxDist} addLog={addLog} showToast={showToast} />}
                 {activeTab === 'pengajuan' && <TabPengajuan addRequest={addRequest} user={user} />}
                 {activeTab === 'laporan' && <TabLaporan addReport={addReport} user={user} />}
               </div>
 
-              <div className="absolute bottom-0 w-full bg-white border-t border-gray-200 flex justify-around p-3 pb-6 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)]">
+              <div className="absolute bottom-0 w-full bg-white border-t border-gray-200 flex justify-around p-2 pb-5 shadow-[0_-10px_15px_-3px_rgba(0,0,0,0.05)] z-20">
                 <NavButton icon="fas fa-camera" label="Absen" isActive={activeTab === 'absen'} onClick={() => setActiveTab('absen')} />
                 <NavButton icon="fas fa-file-alt" label="Pengajuan" isActive={activeTab === 'pengajuan'} onClick={() => setActiveTab('pengajuan')} />
                 <NavButton icon="fas fa-chart-line" label="Laporan" isActive={activeTab === 'laporan'} onClick={() => setActiveTab('laporan')} />
@@ -213,17 +332,17 @@
 
         function NavButton({ icon, label, isActive, onClick }) {
           return (
-            <button onClick={onClick} className={`flex flex-col items-center p-2 rounded-xl w-20 transition-colors ${isActive ? 'text-blue-600' : 'text-gray-400 hover:text-gray-600'}`}>
-              <div className={`${isActive ? 'bg-blue-50 p-2 rounded-full mb-1 text-blue-600' : 'mb-1 text-gray-400'}`}>
-                <i className={`${icon} text-2xl`}></i>
+            <button onClick={onClick} className={`flex flex-col items-center p-2 rounded-xl w-20 transition-all duration-300 ${isActive ? '-translate-y-2' : 'hover:-translate-y-1'}`}>
+              <div className={`w-12 h-12 rounded-2xl flex items-center justify-center mb-1 transition-all duration-300 ${isActive ? 'bg-blue-600 text-white shadow-lg shadow-blue-200' : 'bg-transparent text-gray-400'}`}>
+                <i className={`${icon} text-xl`}></i>
               </div>
-              <span className="text-xs font-medium">{label}</span>
+              <span className={`text-[10px] font-bold ${isActive ? 'text-blue-600' : 'text-gray-400'}`}>{label}</span>
             </button>
           );
         }
 
         // --- TAB ABSENSI (Kamera & GPS) ---
-        function TabAbsen({ user, officeLoc, maxDist, addLog }) {
+        function TabAbsen({ user, officeLoc, maxDist, addLog, showToast }) {
           const [location, setLocation] = useState(null);
           const [distance, setDistance] = useState(null);
           const [locError, setLocError] = useState("Sedang mencari lokasi...");
@@ -232,7 +351,6 @@
           const [absenType, setAbsenType] = useState(''); 
           const videoRef = useRef(null);
           const [photoData, setPhotoData] = useState(null);
-          const [successMsg, setSuccessMsg] = useState('');
 
           const fetchLocation = () => {
             setLocError("Mencari lokasi akurat...");
@@ -249,15 +367,15 @@
                   setLocError(null);
                 },
                 (err) => {
-                  if (err.code === 1) setLocError("Izin ditolak! Mohon izinkan akses lokasi browser.");
+                  if (err.code === 1) setLocError("Izin lokasi ditolak browser.");
                   else if (err.code === 2) setLocError("Sinyal GPS tidak tersedia.");
                   else if (err.code === 3) setLocError("Waktu permintaan lokasi habis.");
-                  else setLocError("Terjadi kesalahan sistem saat akses GPS.");
+                  else setLocError("Gagal akses GPS.");
                 },
                 { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
               );
             } else {
-              setLocError("Peramban Anda tidak mendukung fitur GPS.");
+              setLocError("Peramban tidak dukung GPS.");
             }
           };
 
@@ -267,136 +385,112 @@
             let stream;
             if (isCameraOpen && !photoData) {
               navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' } })
-                .then(s => {
-                  stream = s;
-                  if (videoRef.current) videoRef.current.srcObject = s;
-                })
-                .catch(err => alert("Gagal akses kamera! Pastikan Anda mengizinkan akses kamera di browser."));
+                .then(s => { stream = s; if (videoRef.current) videoRef.current.srcObject = s; })
+                .catch(err => { showToast("Gagal akses kamera browser!"); setIsCameraOpen(false); });
             }
             return () => { if (stream) stream.getTracks().forEach(t => t.stop()); };
           }, [isCameraOpen, photoData]);
 
           const handleOpenAbsen = (type) => {
-            if (!location) return alert("Tunggu hingga lokasi GPS ditemukan!");
+            if (!location) return showToast("Tunggu GPS ditemukan!");
             if (distance > maxDist) {
-              const lanjut = window.confirm(`Anda berada ${distance}m dari kantor (Batas ${maxDist}m). Lanjutkan simulasi absen di luar jangkauan?`);
-              if (!lanjut) return;
+               showToast(`Luar Jangkauan! Jarak Anda ${distance}m (Batas ${maxDist}m). Log ditandai MERAH.`);
             }
-            setAbsenType(type);
-            setIsCameraOpen(true);
-            setPhotoData(null);
+            setAbsenType(type); setIsCameraOpen(true); setPhotoData(null);
           };
 
           const takePhotoAndSubmit = () => {
             if (videoRef.current) {
               const canvas = document.createElement('canvas');
-              canvas.width = videoRef.current.videoWidth;
-              canvas.height = videoRef.current.videoHeight;
-              // Gambar frame video ke canvas
+              canvas.width = videoRef.current.videoWidth; canvas.height = videoRef.current.videoHeight;
               canvas.getContext('2d').drawImage(videoRef.current, 0, 0);
-              // Kompresi foto menjadi kualitas 50% agar storage browser tidak cepat penuh
               const photoBase64 = canvas.toDataURL('image/jpeg', 0.5); 
               setPhotoData(photoBase64);
               
               addLog({
-                id: Date.now(), 
-                userName: user.name, 
-                type: absenType,
-                time: new Date().toLocaleTimeString('id-ID'),
-                date: new Date().toLocaleDateString('id-ID'),
-                photo: photoBase64,
-                status: distance <= maxDist ? 'Tepat Lokasi' : 'Luar Jangkauan'
+                userName: user.name, type: absenType,
+                time: new Date().toLocaleTimeString('id-ID'), date: new Date().toLocaleDateString('id-ID'),
+                photo: photoBase64, status: distance <= maxDist ? 'Tepat Lokasi' : 'Luar Jangkauan'
               });
 
-              setTimeout(() => {
-                setIsCameraOpen(false);
-                setSuccessMsg(`Berhasil Absen ${absenType}!`);
-                setTimeout(() => setSuccessMsg(''), 3000);
-              }, 800);
+              setTimeout(() => { setIsCameraOpen(false); }, 1000);
             }
           };
 
           if (isCameraOpen) {
             return (
-              <div className="fixed inset-0 bg-black z-50 flex flex-col">
-                <div className="p-4 flex justify-between items-center text-white bg-black/50 absolute top-0 w-full z-10">
-                  <span className="font-semibold">Absen: {absenType}</span>
-                  <button onClick={() => setIsCameraOpen(false)}><i className="fas fa-times text-2xl"></i></button>
+              <div className="fixed inset-0 bg-slate-900 z-50 flex flex-col">
+                <div className="p-4 flex justify-between items-center text-white bg-slate-900 absolute top-0 w-full z-10 shadow-md">
+                  <span className="font-bold tracking-wide">Absen: {absenType}</span>
+                  <button onClick={() => setIsCameraOpen(false)} className="w-8 h-8 bg-white/10 rounded-full flex items-center justify-center"><i className="fas fa-times"></i></button>
                 </div>
-                <div className="flex-1 relative flex items-center justify-center overflow-hidden">
+                <div className="flex-1 relative flex items-center justify-center overflow-hidden mt-14">
                   {!photoData && <video ref={videoRef} autoPlay playsInline className="min-w-full min-h-full object-cover" />}
                   {photoData && <img src={photoData} alt="Hasil" className="min-w-full min-h-full object-cover" />}
-                  {!photoData && <div className="absolute inset-0 border-[40px] border-black/40 rounded-full w-[300px] h-[400px] m-auto pointer-events-none"></div>}
+                  {!photoData && <div className="absolute inset-0 border-[40px] border-slate-900/60 rounded-full w-[300px] h-[400px] m-auto pointer-events-none"></div>}
                 </div>
-                <div className="h-32 bg-black flex items-center justify-center pb-8">
+                <div className="h-32 bg-slate-900 flex items-center justify-center pb-8 pt-4">
                   {!photoData ? (
-                     <button onClick={takePhotoAndSubmit} className="w-16 h-16 bg-white rounded-full border-4 border-gray-300 flex items-center justify-center hover:bg-gray-200">
-                       <div className="w-12 h-12 border-2 border-black rounded-full"></div>
+                     <button onClick={takePhotoAndSubmit} className="w-20 h-20 bg-white rounded-full border-4 border-slate-400 flex items-center justify-center hover:bg-gray-200 active:scale-95 transition-transform shadow-[0_0_15px_rgba(255,255,255,0.3)]">
+                       <div className="w-16 h-16 border-2 border-slate-800 rounded-full"></div>
                      </button>
-                  ) : <p className="text-green-400 font-bold text-lg animate-pulse">Memproses Absensi...</p>}
+                  ) : <div className="flex flex-col items-center"><i className="fas fa-cloud-upload-alt text-3xl text-green-400 animate-bounce mb-2"></i><p className="text-green-400 font-bold text-sm">Menyimpan ke Cloud...</p></div>}
                 </div>
               </div>
             );
           }
 
           return (
-            <div className="space-y-6">
-              {successMsg && (
-                <div className="bg-green-100 border border-green-400 text-green-700 px-4 py-3 rounded-xl flex items-center animate-bounce">
-                  <i className="fas fa-check-circle text-xl mr-2"></i> {successMsg}
-                </div>
-              )}
-
-              <div className="bg-white p-4 rounded-xl border border-gray-100 shadow-sm">
-                <div className="flex items-start justify-between">
+            <div className="space-y-5">
+              <div className="bg-white p-5 rounded-2xl border border-gray-100 shadow-sm relative overflow-hidden">
+                <div className="absolute top-0 right-0 w-16 h-16 bg-blue-50 rounded-bl-full -z-0"></div>
+                <div className="flex items-start justify-between relative z-10">
                   <div className="flex items-start">
-                    <div className={`p-3 rounded-lg mr-3 flex items-center justify-center ${distance !== null && distance <= maxDist ? 'bg-green-100 text-green-600' : 'bg-red-100 text-red-600'}`}>
-                      <i className="fas fa-map-marker-alt text-2xl"></i>
+                    <div className={`w-12 h-12 rounded-xl mr-4 flex items-center justify-center text-xl shadow-sm ${distance !== null && distance <= maxDist ? 'bg-gradient-to-br from-green-100 to-green-200 text-green-600' : 'bg-gradient-to-br from-red-100 to-red-200 text-red-600'}`}>
+                      <i className="fas fa-map-marker-alt"></i>
                     </div>
                     <div>
-                      <h3 className="font-semibold text-gray-800">Status Lokasi (GPS)</h3>
+                      <h3 className="font-bold text-gray-800 mb-1">Status GPS</h3>
                       {locError ? (
-                        <p className="text-xs text-red-500 mt-1 font-medium">{locError}</p>
+                        <p className="text-xs text-red-500 font-medium bg-red-50 p-1.5 rounded-md inline-block">{locError}</p>
                       ) : (
                         <div>
-                          <p className="text-sm text-gray-500 mt-1">Jarak dari kantor: <strong className={distance <= maxDist ? 'text-green-600' : 'text-red-600'}>{distance} meter</strong></p>
-                          <p className="text-xs mt-1 font-medium">
-                            {distance <= maxDist ? <span className="text-green-600">✅ Valid (Dalam Radius)</span> : <span className="text-red-500">❌ Di luar jangkauan {maxDist}m</span>}
+                          <p className="text-xs text-gray-500 mb-0.5">Jarak ke kantor: <strong className={distance <= maxDist ? 'text-green-600' : 'text-red-600'}>{distance} m</strong></p>
+                          <p className="text-[10px] font-bold uppercase tracking-wider">
+                            {distance <= maxDist ? <span className="text-green-600"><i className="fas fa-check-circle mr-1"></i> Valid Radius</span> : <span className="text-red-500"><i className="fas fa-times-circle mr-1"></i> Luar Jangkauan</span>}
                           </p>
                         </div>
                       )}
                     </div>
                   </div>
-                  <button onClick={fetchLocation} className="p-2 text-blue-500 hover:bg-blue-50 rounded-full transition-colors" title="Perbarui Lokasi">
-                    <i className="fas fa-sync-alt text-xl"></i>
+                  <button onClick={fetchLocation} className="w-10 h-10 bg-slate-50 text-blue-500 hover:bg-blue-100 rounded-full transition-colors flex items-center justify-center shadow-sm" title="Perbarui Lokasi">
+                    <i className="fas fa-sync-alt"></i>
                   </button>
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
-                <button onClick={() => handleOpenAbsen('Masuk Kerja')} className="bg-green-500 hover:bg-green-600 text-white p-4 rounded-2xl flex flex-col items-center justify-center shadow-sm transition-transform active:scale-95">
-                  <i className="fas fa-check-circle text-3xl mb-2"></i>
-                  <span className="font-semibold text-sm">Absen Masuk</span>
-                </button>
-                <button onClick={() => handleOpenAbsen('Mulai Istirahat')} className="bg-yellow-500 hover:bg-yellow-600 text-white p-4 rounded-2xl flex flex-col items-center justify-center shadow-sm transition-transform active:scale-95">
-                  <i className="fas fa-clock text-3xl mb-2"></i>
-                  <span className="font-semibold text-sm">Istirahat</span>
-                </button>
-                <button onClick={() => handleOpenAbsen('Selesai Istirahat')} className="bg-blue-500 hover:bg-blue-600 text-white p-4 rounded-2xl flex flex-col items-center justify-center shadow-sm transition-transform active:scale-95">
-                  <i className="fas fa-tasks text-3xl mb-2"></i>
-                  <span className="font-semibold text-sm">Kembali Kerja</span>
-                </button>
-                <button onClick={() => handleOpenAbsen('Pulang Kerja')} className="bg-red-500 hover:bg-red-600 text-white p-4 rounded-2xl flex flex-col items-center justify-center shadow-sm transition-transform active:scale-95">
-                  <i className="fas fa-sign-out-alt text-3xl mb-2"></i>
-                  <span className="font-semibold text-sm">Absen Pulang</span>
-                </button>
-              </div>
-
-              <div className="bg-blue-50 p-4 rounded-xl border border-blue-100 flex items-center">
-                <i className="fas fa-camera text-xl text-blue-500 mr-3"></i>
-                <p className="text-xs text-blue-800 leading-tight">Sistem mengharuskan foto selfie real-time saat absen untuk mencegah kecurangan.</p>
+              <div className="grid grid-cols-2 gap-3">
+                <ActionBtn icon="fas fa-sign-in-alt" label="Masuk" color="green" onClick={() => handleOpenAbsen('Masuk Kerja')} />
+                <ActionBtn icon="fas fa-coffee" label="Istirahat" color="yellow" onClick={() => handleOpenAbsen('Mulai Istirahat')} />
+                <ActionBtn icon="fas fa-briefcase" label="Kembali" color="blue" onClick={() => handleOpenAbsen('Selesai Istirahat')} />
+                <ActionBtn icon="fas fa-sign-out-alt" label="Pulang" color="red" onClick={() => handleOpenAbsen('Pulang Kerja')} />
               </div>
             </div>
+          );
+        }
+
+        function ActionBtn({ icon, label, color, onClick }) {
+          const colorClasses = {
+            green: 'bg-emerald-500 hover:bg-emerald-600 shadow-emerald-200',
+            yellow: 'bg-amber-500 hover:bg-amber-600 shadow-amber-200',
+            blue: 'bg-blue-500 hover:bg-blue-600 shadow-blue-200',
+            red: 'bg-rose-500 hover:bg-rose-600 shadow-rose-200'
+          };
+          return (
+            <button onClick={onClick} className={`${colorClasses[color]} text-white p-4 rounded-2xl flex flex-col items-center justify-center shadow-lg transition-transform active:scale-95 group`}>
+              <i className={`${icon} text-2xl mb-2 group-hover:scale-110 transition-transform`}></i>
+              <span className="font-bold text-sm tracking-wide">{label}</span>
+            </button>
           );
         }
 
@@ -405,55 +499,32 @@
           const [type, setType] = useState('Cuti');
           const [reason, setReason] = useState('');
           const [date, setDate] = useState('');
-          const [photo, setPhoto] = useState(null);
 
           const handleSubmit = (e) => {
             e.preventDefault();
-            if (type === 'Sakit' && !photo) return alert("Surat dokter wajib diunggah untuk absen Sakit!");
-            
-            addRequest({ 
-              id: Date.now(), 
-              userName: user.name, 
-              type, 
-              reason, 
-              date, 
-              photoAttached: photo !== null, 
-              status: 'Menunggu' 
-            });
-            alert("Pengajuan berhasil dikirim!");
-            setReason(''); setDate(''); setPhoto(null);
+            addRequest({ userName: user.name, type, reason, date, status: 'Menunggu' });
+            setReason(''); setDate('');
           };
 
           return (
             <div className="space-y-4">
-              <h2 className="font-bold text-gray-800 text-lg mb-4">Form Pengajuan Online</h2>
-              <form onSubmit={handleSubmit} className="bg-white p-5 rounded-xl border border-gray-100 shadow-sm space-y-4">
+              <h2 className="font-bold text-gray-800 text-lg mb-2">Form Pengajuan <i className="fas fa-cloud text-blue-400 text-sm ml-1" title="Terkoneksi ke Admin"></i></h2>
+              <form onSubmit={handleSubmit} className="bg-white p-5 rounded-2xl shadow-sm space-y-4">
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Jenis Pengajuan</label>
-                  <select value={type} onChange={(e) => setType(e.target.value)} className="w-full border-gray-300 rounded-lg shadow-sm focus:border-blue-500 focus:ring-blue-500 bg-gray-50 p-2.5 outline-none border">
-                    <option>Cuti</option>
-                    <option>Izin</option>
-                    <option>Sakit</option>
+                  <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1">Jenis Izin</label>
+                  <select value={type} onChange={(e) => setType(e.target.value)} className="w-full border-gray-200 rounded-xl shadow-sm focus:border-blue-500 focus:ring-blue-500 bg-slate-50 p-3 outline-none border font-medium text-gray-700">
+                    <option>Cuti</option> <option>Izin</option> <option>Sakit</option>
                   </select>
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Tanggal</label>
-                  <input type="date" required value={date} onChange={(e) => setDate(e.target.value)} className="w-full border-gray-300 rounded-lg shadow-sm focus:border-blue-500 focus:ring-blue-500 bg-gray-50 p-2.5 outline-none border" />
+                  <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1">Tanggal</label>
+                  <input type="date" required value={date} onChange={(e) => setDate(e.target.value)} className="w-full border-gray-200 rounded-xl shadow-sm bg-slate-50 p-3 outline-none border font-medium text-gray-700" />
                 </div>
-                {type === 'Sakit' && (
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Surat Dokter (Foto)</label>
-                    <div className="border-2 border-dashed border-gray-300 rounded-lg p-4 text-center cursor-pointer hover:bg-gray-50 relative">
-                      <input type="file" accept="image/*" onChange={(e) => { if(e.target.files[0]) setPhoto(URL.createObjectURL(e.target.files[0])) }} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" required />
-                      {photo ? <div className="text-green-600 font-medium"><i className="fas fa-check-circle mr-2"></i> Foto Terlampir</div> : <div className="text-gray-500"><i className="fas fa-image text-3xl mb-1 text-gray-400 block"></i><span className="text-xs">Tap untuk unggah foto</span></div>}
-                    </div>
-                  </div>
-                )}
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Alasan</label>
-                  <textarea required value={reason} onChange={(e) => setReason(e.target.value)} rows="3" className="w-full border-gray-300 rounded-lg shadow-sm bg-gray-50 p-2.5 outline-none border"></textarea>
+                  <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1">Keterangan</label>
+                  <textarea required value={reason} onChange={(e) => setReason(e.target.value)} rows="3" className="w-full border-gray-200 rounded-xl shadow-sm bg-slate-50 p-3 outline-none border font-medium text-gray-700 text-sm"></textarea>
                 </div>
-                <button type="submit" className="w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-3 rounded-xl transition-colors">Kirim Pengajuan</button>
+                <button type="submit" className="w-full bg-slate-800 hover:bg-slate-900 text-white font-bold py-3.5 rounded-xl transition-colors shadow-md">KIRIM KE ADMIN</button>
               </form>
             </div>
           );
@@ -464,102 +535,132 @@
           const [content, setContent] = useState('');
           const handleSubmit = (e) => {
             e.preventDefault();
-            addReport({ 
-              id: Date.now(), 
-              userName: user.name, 
-              date: new Date().toLocaleDateString('id-ID'), 
-              time: new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }),
-              content 
-            });
-            alert("Laporan berhasil disimpan!"); 
+            addReport({ userName: user.name, date: new Date().toLocaleDateString('id-ID'), time: new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }), content });
             setContent('');
           };
           return (
             <div className="space-y-4">
-              <h2 className="font-bold text-gray-800 text-lg mb-4">Laporan Kegiatan Harian</h2>
-              <form onSubmit={handleSubmit} className="bg-white p-5 rounded-xl border border-gray-100 shadow-sm space-y-4">
+              <h2 className="font-bold text-gray-800 text-lg mb-2">Laporan Harian</h2>
+              <form onSubmit={handleSubmit} className="bg-white p-5 rounded-2xl shadow-sm space-y-4">
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Aktivitas Hari Ini</label>
-                  <textarea required value={content} onChange={(e) => setContent(e.target.value)} rows="6" className="w-full border-gray-300 rounded-lg shadow-sm bg-gray-50 p-2.5 outline-none border" placeholder="- Meeting..."></textarea>
+                  <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Aktivitas Hari Ini</label>
+                  <textarea required value={content} onChange={(e) => setContent(e.target.value)} rows="8" className="w-full border-gray-200 rounded-xl shadow-sm bg-slate-50 p-3 outline-none border font-medium text-gray-700 text-sm" placeholder="Tulis rincian pekerjaan di sini..."></textarea>
                 </div>
-                <button type="submit" className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-medium py-3 rounded-xl transition-colors">Simpan Laporan</button>
+                <button type="submit" className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3.5 rounded-xl transition-colors shadow-md flex items-center justify-center">
+                   <i className="fas fa-paper-plane mr-2"></i> SIMPAN LAPORAN
+                </button>
               </form>
             </div>
           );
         }
 
         // --- DASHBOARD ADMIN ---
-        function AdminDashboard({ user, onLogout, logs, requests, reports, officeLoc, setOfficeLoc, clearData, updateRequestStatus }) {
+        function AdminDashboard({ user, onLogout, logs, requests, reports, officeLoc, setOfficeLoc, clearLogs, updateRequestStatus, exportData }) {
           const [activeTab, setActiveTab] = useState('monitoring');
+          const [showLocModal, setShowLocModal] = useState(false);
+          const [newLat, setNewLat] = useState(officeLoc.lat);
+          const [newLng, setNewLng] = useState(officeLoc.lng);
+
           const menuItems = [
-            { id: 'monitoring', label: 'Monitoring Real-time', icon: 'fas fa-chart-line' },
-            { id: 'validasi', label: 'Validasi Pengajuan', icon: 'fas fa-check-circle' },
-            { id: 'laporan', label: 'Rekap Laporan', icon: 'fas fa-file-alt' },
-            { id: 'pengaturan', label: 'Pengaturan Sistem', icon: 'fas fa-cog' },
+            { id: 'monitoring', label: 'Monitoring Absensi', icon: 'fas fa-desktop' },
+            { id: 'validasi', label: 'Persetujuan Izin', icon: 'fas fa-clipboard-check' },
+            { id: 'laporan', label: 'Aktivitas Karyawan', icon: 'fas fa-tasks' }
           ];
 
           return (
-            <div className="flex h-screen bg-gray-100">
+            <div className="flex h-screen bg-slate-100 font-sans">
               {/* Sidebar Desktop */}
-              <div className="w-64 bg-slate-900 text-white hidden md:flex flex-col">
+              <div className="w-64 bg-slate-900 text-white hidden md:flex flex-col shadow-2xl z-20">
                 <div className="p-6 bg-slate-950 border-b border-slate-800 flex items-center">
-                  <i className="fas fa-shield-alt text-3xl text-blue-400 mr-3"></i>
-                  <div><h1 className="font-bold text-lg leading-tight">Admin Panel</h1><p className="text-xs text-slate-400">All-in-One Absensi</p></div>
+                  <div className="w-10 h-10 bg-blue-600 rounded-lg flex items-center justify-center mr-3 shadow-lg shadow-blue-500/30">
+                     <i className="fas fa-cloud text-xl"></i>
+                  </div>
+                  <div><h1 className="font-bold text-lg leading-tight tracking-wide">Admin Hub</h1><p className="text-[10px] text-blue-300 font-bold uppercase tracking-widest mt-0.5">Cloud Database</p></div>
                 </div>
-                <div className="flex-1 py-4">
+                <div className="flex-1 py-6 px-3 space-y-1">
                   {menuItems.map(item => (
-                    <button key={item.id} onClick={() => setActiveTab(item.id)} className={`w-full flex items-center px-6 py-3 text-sm transition-colors ${activeTab === item.id ? 'bg-blue-600 text-white border-r-4 border-blue-400' : 'text-slate-300 hover:bg-slate-800'}`}>
-                      <i className={`${item.icon} text-lg mr-3 w-6`}></i>{item.label}
+                    <button key={item.id} onClick={() => setActiveTab(item.id)} className={`w-full flex items-center px-4 py-3.5 rounded-xl text-sm font-semibold transition-all ${activeTab === item.id ? 'bg-blue-600 text-white shadow-md shadow-blue-600/20' : 'text-slate-400 hover:bg-slate-800 hover:text-slate-200'}`}>
+                      <i className={`${item.icon} text-lg mr-3 w-6 text-center`}></i>{item.label}
                     </button>
                   ))}
+                  
+                  <div className="pt-6 pb-2 px-4">
+                     <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-2">Pengaturan</p>
+                     <button onClick={() => setShowLocModal(true)} className="w-full flex items-center px-4 py-2.5 rounded-lg text-sm font-semibold text-slate-400 hover:bg-slate-800 hover:text-slate-200 transition-all">
+                       <i className="fas fa-map-marker-alt text-lg mr-3 w-6 text-center"></i>Lokasi Kantor
+                     </button>
+                     <button onClick={clearLogs} className="w-full flex items-center px-4 py-2.5 rounded-lg text-sm font-semibold text-rose-400 hover:bg-rose-500/10 transition-all mt-1">
+                       <i className="fas fa-trash-alt text-lg mr-3 w-6 text-center"></i>Reset Absensi
+                     </button>
+                  </div>
                 </div>
                 <div className="p-4 border-t border-slate-800">
-                  <button onClick={onLogout} className="w-full flex items-center justify-center py-2 px-4 bg-red-500/10 text-red-400 rounded-lg hover:bg-red-500/20"><i className="fas fa-sign-out-alt mr-2"></i> Keluar</button>
+                  <button onClick={onLogout} className="w-full flex items-center justify-center py-3 px-4 bg-slate-800 text-slate-300 font-bold rounded-xl hover:bg-slate-700 transition-colors"><i className="fas fa-power-off mr-2"></i> KELUAR</button>
                 </div>
               </div>
 
               {/* Konten Utama */}
-              <div className="flex-1 flex flex-col overflow-hidden">
+              <div className="flex-1 flex flex-col overflow-hidden bg-slate-50/50">
                 {/* Header Mobile */}
-                <div className="md:hidden bg-slate-900 text-white p-4 flex justify-between items-center">
-                   <div className="flex items-center"><i className="fas fa-shield-alt text-xl text-blue-400 mr-2"></i><h1 className="font-bold">Admin Panel</h1></div>
-                   <button onClick={onLogout}><i className="fas fa-sign-out-alt text-xl text-red-400"></i></button>
+                <div className="md:hidden bg-slate-900 text-white p-4 flex justify-between items-center shadow-md z-20">
+                   <div className="flex items-center"><i className="fas fa-cloud text-xl text-blue-400 mr-2"></i><h1 className="font-bold tracking-wide">Admin Hub</h1></div>
+                   <button onClick={onLogout} className="bg-slate-800 w-8 h-8 rounded-full flex items-center justify-center"><i className="fas fa-power-off text-sm text-red-400"></i></button>
                 </div>
-                <div className="md:hidden bg-white border-b p-2 shadow-sm z-10">
-                  <select value={activeTab} onChange={(e) => setActiveTab(e.target.value)} className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 font-medium text-slate-700 outline-none">
-                    {menuItems.map(item => <option key={item.id} value={item.id}>{item.label}</option>)}
-                  </select>
+                <div className="md:hidden bg-white border-b border-slate-200 p-2 shadow-sm z-10 flex gap-2 overflow-x-auto">
+                   {menuItems.map(item => (
+                     <button key={item.id} onClick={() => setActiveTab(item.id)} className={`whitespace-nowrap px-4 py-2 text-xs font-bold rounded-full ${activeTab === item.id ? 'bg-slate-800 text-white' : 'bg-slate-100 text-slate-500'}`}>{item.label}</button>
+                   ))}
+                   <button onClick={() => setShowLocModal(true)} className="whitespace-nowrap px-4 py-2 text-xs font-bold rounded-full bg-slate-100 text-slate-500"><i className="fas fa-cog"></i></button>
                 </div>
 
                 <main className="flex-1 overflow-y-auto p-4 md:p-8">
-                  <div className="flex justify-between items-end mb-8">
+                  <div className="flex flex-col md:flex-row justify-between items-start md:items-end mb-6 md:mb-8 gap-4">
                     <div>
-                      <h2 className="text-2xl font-bold text-gray-800">{menuItems.find(i=>i.id===activeTab).label}</h2>
+                      <h2 className="text-2xl font-black text-slate-800 tracking-tight">{menuItems.find(i=>i.id===activeTab)?.label || 'Pengaturan'}</h2>
+                      <p className="text-sm font-medium text-slate-500 mt-1 flex items-center"><i className="fas fa-circle text-[8px] text-green-500 mr-2 animate-pulse"></i> Live tersinkronisasi dari Cloud</p>
                     </div>
+                    
+                    {activeTab === 'monitoring' && (
+                       <button onClick={exportData} className="bg-emerald-600 hover:bg-emerald-700 text-white px-5 py-2.5 rounded-xl font-bold text-sm transition-colors shadow-md flex items-center">
+                         <i className="fas fa-file-excel mr-2 text-lg"></i> Export ke Excel
+                       </button>
+                    )}
                   </div>
 
                   {activeTab === 'monitoring' && (
-                    <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+                    <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
                       <div className="overflow-x-auto">
                         <table className="w-full text-left border-collapse whitespace-nowrap">
                           <thead>
-                            <tr className="bg-slate-50 text-slate-600 border-b border-gray-200 text-sm">
-                              <th className="p-4 font-semibold">Pegawai</th>
-                              <th className="p-4 font-semibold">Jenis Absen</th>
-                              <th className="p-4 font-semibold">Waktu & Tanggal</th>
-                              <th className="p-4 font-semibold">Status Lokasi</th>
-                              <th className="p-4 font-semibold">Foto Validasi</th>
+                            <tr className="bg-slate-50/80 text-slate-500 border-b border-slate-200 text-xs uppercase tracking-wider font-bold">
+                              <th className="p-4 pl-6">Pegawai</th>
+                              <th className="p-4">Log Absen</th>
+                              <th className="p-4">Tanggal & Waktu</th>
+                              <th className="p-4">Validasi GPS</th>
+                              <th className="p-4 pr-6 text-right">Foto Bukti</th>
                             </tr>
                           </thead>
-                          <tbody>
-                            {logs.length === 0 ? <tr><td colSpan="5" className="p-8 text-center text-gray-400">Belum ada data absensi hari ini.</td></tr> : 
+                          <tbody className="divide-y divide-slate-100">
+                            {logs.length === 0 ? <tr><td colSpan="5" className="p-12 text-center text-slate-400 font-medium"><i className="fas fa-folder-open text-4xl mb-3 block opacity-20"></i>Database kosong.</td></tr> : 
                               logs.map(log => (
-                                <tr key={log.id} className="border-b border-gray-100 hover:bg-slate-50">
-                                  <td className="p-4 font-medium text-gray-800">{log.userName}</td>
-                                  <td className="p-4"><span className={`px-2 py-1 rounded text-xs font-medium ${log.type.includes('Masuk') ? 'bg-green-100 text-green-700' : log.type.includes('Pulang') ? 'bg-red-100 text-red-700' : 'bg-yellow-100 text-yellow-700'}`}>{log.type}</span></td>
-                                  <td className="p-4 text-sm text-gray-600">{log.date} - {log.time}</td>
-                                  <td className="p-4"><span className={`flex items-center text-xs font-medium ${log.status === 'Tepat Lokasi' ? 'text-green-600' : 'text-red-500'}`}><i className={`fas ${log.status === 'Tepat Lokasi' ? 'fa-check-circle' : 'fa-times-circle'} mr-1`}></i>{log.status}</span></td>
-                                  <td className="p-4"><img src={log.photo} alt="Validasi" className="w-12 h-12 object-cover rounded border bg-gray-200" /></td>
+                                <tr key={log.dbId} className="hover:bg-slate-50/50 transition-colors">
+                                  <td className="p-4 pl-6 font-bold text-slate-800">{log.userName}</td>
+                                  <td className="p-4">
+                                     <span className={`px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-wider ${log.type.includes('Masuk') ? 'bg-emerald-100 text-emerald-700' : log.type.includes('Pulang') ? 'bg-rose-100 text-rose-700' : 'bg-amber-100 text-amber-700'}`}>
+                                       {log.type}
+                                     </span>
+                                  </td>
+                                  <td className="p-4 text-sm font-medium text-slate-600"><i className="far fa-calendar-alt text-slate-400 mr-1.5"></i> {log.date} <span className="mx-1 text-slate-300">|</span> <i className="far fa-clock text-slate-400 mr-1.5"></i> {log.time}</td>
+                                  <td className="p-4">
+                                    <span className={`flex items-center text-xs font-bold ${log.status === 'Tepat Lokasi' ? 'text-emerald-600' : 'text-rose-500'}`}>
+                                      <i className={`fas ${log.status === 'Tepat Lokasi' ? 'fa-check-circle' : 'fa-exclamation-circle'} mr-1.5`}></i>{log.status}
+                                    </span>
+                                  </td>
+                                  <td className="p-4 pr-6 flex justify-end">
+                                    <div className="w-10 h-10 rounded-lg overflow-hidden border border-slate-200 shadow-sm bg-slate-100 hover:scale-150 transform transition-transform origin-right cursor-pointer">
+                                      <img src={log.photo} alt="Validasi" className="w-full h-full object-cover" />
+                                    </div>
+                                  </td>
                                 </tr>
                             ))}
                           </tbody>
@@ -569,27 +670,34 @@
                   )}
 
                   {activeTab === 'validasi' && (
-                    <div className="space-y-4">
-                      {requests.length === 0 ? <div className="bg-white p-8 rounded-xl border text-center text-gray-400">Belum ada pengajuan masuk.</div> : 
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                      {requests.length === 0 ? <div className="col-span-full bg-white p-12 rounded-2xl border border-slate-200 text-center text-slate-400 font-medium"><i className="fas fa-inbox text-4xl mb-3 block opacity-20"></i>Tidak ada antrean persetujuan.</div> : 
                         requests.map(req => (
-                          <div key={req.id} className="bg-white p-5 rounded-xl border border-gray-100 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-4">
+                          <div key={req.dbId} className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex flex-col justify-between">
                             <div>
-                              <div className="flex items-center mb-1">
-                                <span className="font-bold text-gray-800 mr-2">{req.userName}</span>
-                                <span className="px-2 py-0.5 bg-blue-100 text-blue-700 text-xs font-semibold rounded">{req.type}</span>
-                                {req.status !== 'Menunggu' && (
-                                  <span className={`ml-2 px-2 py-0.5 text-xs font-semibold rounded ${req.status === 'Disetujui' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
-                                    {req.status}
-                                  </span>
-                                )}
+                              <div className="flex justify-between items-start mb-3">
+                                <div className="flex items-center">
+                                  <div className="w-10 h-10 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center font-bold mr-3">{req.userName.charAt(0)}</div>
+                                  <div>
+                                    <span className="font-bold text-slate-800 block leading-tight">{req.userName}</span>
+                                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">{req.date}</span>
+                                  </div>
+                                </div>
+                                <span className={`px-2.5 py-1 text-[10px] font-black uppercase tracking-wider rounded-md ${req.status === 'Menunggu' ? 'bg-amber-100 text-amber-700' : req.status === 'Disetujui' ? 'bg-emerald-100 text-emerald-700' : 'bg-rose-100 text-rose-700'}`}>
+                                  {req.status}
+                                </span>
                               </div>
-                              <p className="text-sm text-gray-600"><i className="fas fa-calendar-alt mr-1"></i> {req.date}</p>
-                              <p className="text-sm text-gray-700 mt-2 bg-gray-50 p-2 rounded">"{req.reason}"</p>
+                              
+                              <div className="bg-slate-50 p-3 rounded-xl border border-slate-100 mb-4">
+                                <div className="flex items-center mb-1"><span className="text-xs font-bold text-blue-600 uppercase tracking-wider mr-2">{req.type}</span></div>
+                                <p className="text-sm font-medium text-slate-700">"{req.reason}"</p>
+                              </div>
                             </div>
+                            
                             {req.status === 'Menunggu' && (
-                              <div className="flex gap-2">
-                                <button onClick={() => updateRequestStatus(req.id, 'Ditolak')} className="px-4 py-2 border border-red-200 text-red-600 rounded-lg hover:bg-red-50 text-sm font-medium">Tolak</button>
-                                <button onClick={() => updateRequestStatus(req.id, 'Disetujui')} className="px-4 py-2 bg-green-500 hover:bg-green-600 text-white rounded-lg text-sm font-medium">Setujui</button>
+                              <div className="flex gap-2 border-t border-slate-100 pt-4">
+                                <button onClick={() => updateRequestStatus(req.dbId, 'Ditolak')} className="flex-1 py-2 border-2 border-slate-200 text-slate-500 rounded-xl hover:bg-slate-50 hover:text-rose-600 hover:border-rose-200 text-xs font-bold transition-all">TOLAK</button>
+                                <button onClick={() => updateRequestStatus(req.dbId, 'Disetujui')} className="flex-1 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold transition-all shadow-md">SETUJUI IZIN</button>
                               </div>
                             )}
                           </div>
@@ -598,44 +706,42 @@
                   )}
 
                   {activeTab === 'laporan' && (
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                       {reports.length === 0 ? <div className="col-span-full bg-white p-8 rounded-xl border text-center text-gray-400">Belum ada laporan kegiatan.</div> : 
+                    <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                       {reports.length === 0 ? <div className="col-span-full bg-white p-12 rounded-2xl border border-slate-200 text-center text-slate-400 font-medium"><i className="fas fa-clipboard-list text-4xl mb-3 block opacity-20"></i>Belum ada laporan masuk hari ini.</div> : 
                          reports.map(rep => (
-                           <div key={rep.id} className="bg-white p-5 rounded-xl border border-gray-100 shadow-sm">
-                             <div className="flex justify-between items-center mb-3 border-b pb-2">
-                               <span className="font-bold text-gray-800">{rep.userName}</span>
-                               <span className="text-xs text-gray-500"><i className="fas fa-clock mr-1"></i> {rep.date} ({rep.time})</span>
+                           <div key={rep.dbId} className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm hover:shadow-md transition-shadow">
+                             <div className="flex justify-between items-center mb-4 border-b border-slate-100 pb-3">
+                               <span className="font-bold text-slate-800">{rep.userName}</span>
+                               <span className="text-[10px] font-bold text-slate-400 bg-slate-100 px-2 py-1 rounded-md"><i className="fas fa-clock mr-1"></i> {rep.date}</span>
                              </div>
-                             <p className="text-sm text-gray-700 whitespace-pre-line leading-relaxed">{rep.content}</p>
+                             <p className="text-sm font-medium text-slate-600 whitespace-pre-line leading-relaxed">{rep.content}</p>
                            </div>
                        ))}
                     </div>
                   )}
 
-                  {activeTab === 'pengaturan' && (
-                    <div className="space-y-6">
-                      {/* Form Pengaturan GPS */}
-                      <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 max-w-2xl">
-                        <h3 className="font-bold text-lg mb-4 flex items-center"><i className="fas fa-map-marker-alt mr-2 text-blue-500"></i> Pengaturan Koordinat GPS Kantor</h3>
-                        <p className="text-sm text-gray-500 mb-4">Ubah koordinat ini untuk menentukan titik referensi absen karyawan.</p>
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-                          <div><label className="block text-xs font-bold text-gray-500 uppercase mb-1">Latitude</label><input type="number" step="any" value={officeLoc.lat} onChange={(e) => setOfficeLoc({...officeLoc, lat: parseFloat(e.target.value)})} className="w-full border-gray-300 rounded-lg bg-gray-50 p-3 border outline-none focus:border-blue-500" /></div>
-                          <div><label className="block text-xs font-bold text-gray-500 uppercase mb-1">Longitude</label><input type="number" step="any" value={officeLoc.lng} onChange={(e) => setOfficeLoc({...officeLoc, lng: parseFloat(e.target.value)})} className="w-full border-gray-300 rounded-lg bg-gray-50 p-3 border outline-none focus:border-blue-500" /></div>
-                        </div>
-                        <div className="flex mt-6"><button onClick={() => alert("Koordinat Lokasi Berhasil Disimpan!")} className="w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-3 rounded-xl text-sm transition-colors">Simpan Konfigurasi</button></div>
-                      </div>
-
-                      {/* Reset Data Absen */}
-                      <div className="bg-red-50 p-6 rounded-xl shadow-sm border border-red-100 max-w-2xl">
-                        <h3 className="font-bold text-lg mb-2 text-red-700 flex items-center"><i className="fas fa-exclamation-triangle mr-2"></i> Area Berbahaya</h3>
-                        <p className="text-sm text-red-600 mb-4">Menghapus semua data absensi, pengajuan, dan laporan yang tersimpan di sistem.</p>
-                        <button onClick={clearData} className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg text-sm font-medium transition-colors">
-                           Reset Semua Data
-                        </button>
-                      </div>
-                    </div>
-                  )}
                 </main>
+
+                {/* Modal Pengaturan Lokasi */}
+                {showLocModal && (
+                   <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+                      <div className="bg-white w-full max-w-md rounded-2xl shadow-2xl overflow-hidden">
+                         <div className="bg-slate-800 p-5 text-white flex justify-between items-center">
+                            <h3 className="font-bold tracking-wide"><i className="fas fa-map-marked-alt mr-2 text-blue-400"></i> Set Pusat Koordinat</h3>
+                            <button onClick={()=>setShowLocModal(false)}><i className="fas fa-times"></i></button>
+                         </div>
+                         <div className="p-6">
+                            <p className="text-xs font-medium text-slate-500 mb-4 line-clamp-2">Masukkan titik kordinat kantor Anda. Pegawai hanya dapat melakukan absen masuk di radius 100m dari titik ini.</p>
+                            <div className="space-y-4 mb-6">
+                              <div><label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Latitude</label><input type="number" step="any" value={newLat} onChange={(e) => setNewLat(parseFloat(e.target.value))} className="w-full border-2 border-slate-100 rounded-xl bg-slate-50 p-3 outline-none focus:border-blue-500 font-medium text-slate-700" /></div>
+                              <div><label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Longitude</label><input type="number" step="any" value={newLng} onChange={(e) => setNewLng(parseFloat(e.target.value))} className="w-full border-2 border-slate-100 rounded-xl bg-slate-50 p-3 outline-none focus:border-blue-500 font-medium text-slate-700" /></div>
+                            </div>
+                            <button onClick={()=>{ setOfficeLoc({lat: newLat, lng: newLng}); setShowLocModal(false); }} className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 rounded-xl transition-colors shadow-md">SIMPAN KE CLOUD</button>
+                         </div>
+                      </div>
+                   </div>
+                )}
+
               </div>
             </div>
           );
