@@ -1,680 +1,784 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { 
-  Camera, MapPin, User, LogOut, FileText, 
-  Users, Bell, Calendar, CheckCircle, XCircle, 
-  Menu, Download, Upload, Clock, Home, AlertCircle, Coffee 
+  Camera, MapPin, Clock, Calendar, FileText, CheckCircle, 
+  XCircle, Users, LogOut, Download, ShieldCheck, Activity, 
+  Map, User, Check, X, Image as ImageIcon, RefreshCw
 } from 'lucide-react';
 
-/**
- * MOCK DATA & CONFIGURATION
- * Data awal untuk simulasi sistem
- */
-const INITIAL_USERS = [
-  { id: 1, name: 'Super Admin', email: 'admin@kantor.com', role: 'admin', password: 'admin', department: 'HRD', phone: '08123456789' },
-  { id: 2, name: 'Budi Santoso', email: 'budi@kantor.com', role: 'employee', password: 'user', department: 'IT', phone: '08198765432' },
-  { id: 3, name: 'Siti Aminah', email: 'siti@kantor.com', role: 'employee', password: 'user', department: 'Finance', phone: '08122334455' },
+// --- DATA DUMMY AWAL ---
+const initialUsers = [
+  { id: 1, username: 'budi', password: '123', name: 'Budi Santoso', role: 'employee', department: 'IT' },
+  { id: 2, username: 'siti', password: '123', name: 'Siti Aminah', role: 'employee', department: 'Marketing' },
+  { id: 99, username: 'admin', password: 'admin', name: 'Admin Pusat', role: 'admin' }
 ];
 
-const INITIAL_ANNOUNCEMENTS = [
-  { id: 1, title: 'Libur Nasional', content: 'Hari Jumat kantor libur memperingati hari besar.', date: '2023-10-20' },
-  { id: 2, title: 'Rapat Bulanan', content: 'Evaluasi kinerja dilakukan hari Senin pukul 09:00.', date: '2023-10-22' },
-];
+const OFFICE_LOCATION = { lat: -6.200000, lng: 106.816666 }; // Koordinat contoh (Jakarta Raya)
+const MAX_DISTANCE_METERS = 100; // Maksimal jarak absen dalam meter
 
-const INITIAL_LOGS = [
-  { id: 101, userId: 2, name: 'Budi Santoso', type: 'Masuk', timestamp: new Date(Date.now() - 86400000).toISOString(), location: '-6.2088, 106.8456', photo: null, status: 'On Time' },
-  { id: 102, userId: 3, name: 'Siti Aminah', type: 'Masuk', timestamp: new Date(Date.now() - 86000000).toISOString(), location: '-6.2088, 106.8456', photo: null, status: 'On Time' },
-];
+// --- FUNGSI HELPER ---
+// Menghitung jarak antara 2 koordinat (Haversine Formula)
+function getDistanceFromLatLonInM(lat1, lon1, lat2, lon2) {
+  const R = 6371000; // Radius bumi dalam meter
+  const dLat = deg2rad(lat2 - lat1);
+  const dLon = deg2rad(lon2 - lon1);
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(deg2rad(lat1)) * Math.cos(deg2rad(lat2)) *
+    Math.sin(dLon / 2) * Math.sin(dLon / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  const d = R * c; // Jarak dalam meter
+  return d;
+}
+function deg2rad(deg) { return deg * (Math.PI / 180); }
 
-// Komponen Format Tanggal Indonesia
-const formatDate = (dateString) => {
-  const options = { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' };
-  return new Date(dateString).toLocaleDateString('id-ID', options);
-};
-
-// --- KOMPONEN UI DASAR ---
-
-const Button = ({ children, onClick, variant = 'primary', className = '', disabled = false, icon: Icon }) => {
-  const baseStyle = "px-4 py-2 rounded-lg font-medium transition duration-200 flex items-center justify-center gap-2";
-  const variants = {
-    primary: "bg-blue-600 text-white hover:bg-blue-700 disabled:bg-blue-300",
-    secondary: "bg-gray-100 text-gray-700 hover:bg-gray-200",
-    danger: "bg-red-500 text-white hover:bg-red-600",
-    success: "bg-green-600 text-white hover:bg-green-700",
-    warning: "bg-yellow-500 text-white hover:bg-yellow-600",
-    outline: "border border-gray-300 text-gray-700 hover:bg-gray-50"
-  };
-
-  return (
-    <button 
-      onClick={onClick} 
-      disabled={disabled}
-      className={`${baseStyle} ${variants[variant]} ${className}`}
-    >
-      {Icon && <Icon size={18} />}
-      {children}
-    </button>
-  );
-};
-
-const Card = ({ children, className = '' }) => (
-  <div className={`bg-white rounded-xl shadow-sm border border-gray-100 p-4 ${className}`}>
-    {children}
-  </div>
-);
-
-const Badge = ({ children, type = 'info' }) => {
-  const styles = {
-    info: 'bg-blue-100 text-blue-800',
-    success: 'bg-green-100 text-green-800',
-    warning: 'bg-yellow-100 text-yellow-800',
-    danger: 'bg-red-100 text-red-800',
-  };
-  return (
-    <span className={`px-2 py-1 rounded-full text-xs font-semibold ${styles[type] || styles.info}`}>
-      {children}
-    </span>
-  );
-};
-
-// --- HALAMAN UTAMA ---
-
-export default function App() {
-  const [currentUser, setCurrentUser] = useState(null);
-  const [users, setUsers] = useState(INITIAL_USERS);
-  const [logs, setLogs] = useState(INITIAL_LOGS);
-  const [announcements, setAnnouncements] = useState(INITIAL_ANNOUNCEMENTS);
+// --- KOMPONEN UTAMA ---
+export default function AbsensiApp() {
+  const [currentUser, setCurrentUser] = useState(null); // null = belum login
   
+  // State Global Aplikasi
+  const [logs, setLogs] = useState([]); // Data absensi
+  const [requests, setRequests] = useState([]); // Data cuti/izin/sakit
+  const [reports, setReports] = useState([]); // Data laporan harian
+  const [officeLoc, setOfficeLoc] = useState(OFFICE_LOCATION);
+
   // State Login
-  const [email, setEmail] = useState('');
+  const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [loginError, setLoginError] = useState('');
 
-  // Navigasi Sederhana
-  const [activeTab, setActiveTab] = useState('dashboard');
-
   const handleLogin = (e) => {
     e.preventDefault();
-    const user = users.find(u => u.email === email && u.password === password);
+    const user = initialUsers.find(u => u.username === username && u.password === password);
     if (user) {
       setCurrentUser(user);
       setLoginError('');
-      setActiveTab('dashboard');
+      setUsername('');
+      setPassword('');
     } else {
-      setLoginError('Email atau password salah!');
+      setLoginError('Username atau password salah!');
     }
   };
 
-  const handleLogout = () => {
-    setCurrentUser(null);
-    setEmail('');
-    setPassword('');
-    setActiveTab('dashboard');
-  };
-
+  // --- KOMPONEN: LOGIN ---
   if (!currentUser) {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
         <div className="max-w-md w-full bg-white rounded-2xl shadow-xl overflow-hidden">
-          <div className="bg-blue-600 p-8 text-center">
-            <div className="w-16 h-16 bg-white/20 rounded-full flex items-center justify-center mx-auto mb-4 backdrop-blur-sm">
-              <CheckCircle size={32} className="text-white" />
-            </div>
-            <h1 className="text-2xl font-bold text-white">E-Absensi Pro</h1>
-            <p className="text-blue-100 text-sm">Sistem Absensi Terintegrasi GPS & Selfie</p>
+          <div className="bg-blue-600 p-6 text-center">
+            <ShieldCheck className="w-16 h-16 text-white mx-auto mb-2" />
+            <h1 className="text-2xl font-bold text-white">Sistem Absensi Digital</h1>
+            <p className="text-blue-100 mt-1">Aman, Cerdas, Real-time</p>
           </div>
-          
-          <form onSubmit={handleLogin} className="p-8 space-y-4">
+          <div className="p-6 space-y-4">
+            <h2 className="text-gray-700 font-semibold text-center mb-4">Silakan Login</h2>
+            
             {loginError && (
-              <div className="bg-red-50 text-red-600 p-3 rounded-lg text-sm flex items-center gap-2">
-                <AlertCircle size={16} /> {loginError}
+              <div className="bg-red-50 text-red-600 p-3 rounded-lg text-sm text-center border border-red-200">
+                {loginError}
               </div>
             )}
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
-              <input 
-                type="email" 
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="admin@kantor.com"
-                required
-              />
+
+            <form onSubmit={handleLogin} className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Username</label>
+                <input 
+                  type="text" 
+                  required 
+                  value={username}
+                  onChange={(e) => setUsername(e.target.value)}
+                  className="w-full border-gray-300 rounded-xl shadow-sm focus:border-blue-500 focus:ring-blue-500 bg-gray-50 p-3 outline-none border" 
+                  placeholder="Masukkan username..."
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Password</label>
+                <input 
+                  type="password" 
+                  required 
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  className="w-full border-gray-300 rounded-xl shadow-sm focus:border-blue-500 focus:ring-blue-500 bg-gray-50 p-3 outline-none border" 
+                  placeholder="Masukkan password..."
+                />
+              </div>
+              <button 
+                type="submit"
+                className="w-full py-3 px-4 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-xl flex items-center justify-center transition-colors mt-2"
+              >
+                Masuk
+              </button>
+            </form>
+
+            <div className="mt-6 pt-4 border-t border-gray-100 text-sm text-gray-500">
+              <p className="font-semibold mb-2">Info Akun Demo:</p>
+              <div className="grid grid-cols-2 gap-2 text-xs">
+                <div className="bg-gray-50 p-2 rounded border">
+                  <span className="block font-semibold text-gray-700">Pegawai</span>
+                  user: <span className="font-mono">budi</span><br/>
+                  pass: <span className="font-mono">123</span>
+                </div>
+                <div className="bg-gray-50 p-2 rounded border">
+                  <span className="block font-semibold text-gray-700">Admin</span>
+                  user: <span className="font-mono">admin</span><br/>
+                  pass: <span className="font-mono">admin</span>
+                </div>
+              </div>
             </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Password</label>
-              <input 
-                type="password" 
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder="*****"
-                required
-              />
-            </div>
-            <Button className="w-full mt-4">Masuk Sistem</Button>
-            
-            <div className="text-center text-xs text-gray-500 mt-4">
-              <p>Demo Admin: admin@kantor.com / admin</p>
-              <p>Demo User: budi@kantor.com / user</p>
-            </div>
-          </form>
+          </div>
+          <div className="bg-gray-50 text-center p-4 text-xs text-gray-400 flex justify-center items-center">
+            <ShieldCheck className="w-4 h-4 mr-1" /> Data Terenkripsi & Aman
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // --- ROUTING BERDASARKAN ROLE ---
+  return (
+    <div className="min-h-screen bg-slate-100">
+      {currentUser.role === 'employee' ? (
+        <EmployeeDashboard 
+          user={currentUser} 
+          onLogout={() => setCurrentUser(null)} 
+          officeLoc={officeLoc}
+          addLog={(log) => setLogs([log, ...logs])}
+          addRequest={(req) => setRequests([req, ...requests])}
+          addReport={(rep) => setReports([rep, ...reports])}
+        />
+      ) : (
+        <AdminDashboard 
+          user={currentUser} 
+          onLogout={() => setCurrentUser(null)}
+          logs={logs}
+          requests={requests}
+          reports={reports}
+          officeLoc={officeLoc}
+          setOfficeLoc={setOfficeLoc}
+          updateRequestStatus={(id, status) => {
+            setRequests(requests.map(r => r.id === id ? { ...r, status } : r));
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+// ==========================================
+//           DASHBOARD PEGAWAI
+// ==========================================
+function EmployeeDashboard({ user, onLogout, officeLoc, addLog, addRequest, addReport }) {
+  const [activeTab, setActiveTab] = useState('absen');
+
+  return (
+    <div className="max-w-md mx-auto bg-white min-h-screen shadow-md flex flex-col relative">
+      {/* Header */}
+      <div className="bg-blue-600 text-white p-5 rounded-b-3xl shadow-lg z-10">
+        <div className="flex justify-between items-center mb-4">
+          <div>
+            <h2 className="text-xl font-bold">{user.name}</h2>
+            <p className="text-blue-200 text-sm">{user.department}</p>
+          </div>
+          <button onClick={onLogout} className="p-2 bg-blue-700 rounded-full hover:bg-blue-800">
+            <LogOut className="w-5 h-5" />
+          </button>
+        </div>
+        <div className="bg-white/20 rounded-xl p-3 flex items-center">
+          <Clock className="w-5 h-5 mr-2" />
+          <span className="font-medium text-lg">{new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}</span>
+          <span className="ml-auto text-sm bg-blue-500 px-2 py-1 rounded-md">{new Date().toLocaleDateString('id-ID', { weekday: 'short', day: 'numeric', month: 'short' })}</span>
+        </div>
+      </div>
+
+      {/* Konten Area */}
+      <div className="flex-1 p-5 overflow-y-auto pb-24">
+        {activeTab === 'absen' && <TabAbsen user={user} officeLoc={officeLoc} addLog={addLog} />}
+        {activeTab === 'pengajuan' && <TabPengajuan addRequest={addRequest} />}
+        {activeTab === 'laporan' && <TabLaporan addReport={addReport} />}
+      </div>
+
+      {/* Bottom Navigation */}
+      <div className="absolute bottom-0 w-full bg-white border-t border-gray-200 flex justify-around p-3 pb-6 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)]">
+        <NavButton icon={<Camera />} label="Absen" isActive={activeTab === 'absen'} onClick={() => setActiveTab('absen')} />
+        <NavButton icon={<FileText />} label="Pengajuan" isActive={activeTab === 'pengajuan'} onClick={() => setActiveTab('pengajuan')} />
+        <NavButton icon={<Activity />} label="Laporan" isActive={activeTab === 'laporan'} onClick={() => setActiveTab('laporan')} />
+      </div>
+    </div>
+  );
+}
+
+function NavButton({ icon, label, isActive, onClick }) {
+  return (
+    <button 
+      onClick={onClick}
+      className={`flex flex-col items-center p-2 rounded-xl w-20 transition-colors ${isActive ? 'text-blue-600' : 'text-gray-400 hover:text-gray-600'}`}
+    >
+      <div className={`${isActive ? 'bg-blue-50 p-2 rounded-full mb-1' : 'mb-1'}`}>
+        {React.cloneElement(icon, { className: 'w-6 h-6' })}
+      </div>
+      <span className="text-xs font-medium">{label}</span>
+    </button>
+  );
+}
+
+// --- TAB: ABSENSI (Kamera & GPS) ---
+function TabAbsen({ user, officeLoc, addLog }) {
+  const [location, setLocation] = useState(null);
+  const [distance, setDistance] = useState(null);
+  const [locError, setLocError] = useState("Sedang mencari lokasi...");
+  
+  const [isCameraOpen, setIsCameraOpen] = useState(false);
+  const [absenType, setAbsenType] = useState(''); // Masuk, Istirahat, Pulang
+  const videoRef = useRef(null);
+  const [photoData, setPhotoData] = useState(null);
+  const [successMsg, setSuccessMsg] = useState('');
+
+  // Fungsi untuk mendapatkan lokasi secara manual
+  const fetchLocation = () => {
+    setLocError("Mencari lokasi akurat...");
+    setLocation(null);
+    setDistance(null);
+
+    if (navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          const userLat = pos.coords.latitude;
+          const userLng = pos.coords.longitude;
+          setLocation({ lat: userLat, lng: userLng });
+          
+          const dist = getDistanceFromLatLonInM(userLat, userLng, officeLoc.lat, officeLoc.lng);
+          setDistance(Math.round(dist));
+          setLocError(null);
+        },
+        (err) => {
+          // Menangani error spesifik dari browser
+          if (err.code === 1) {
+            setLocError("Izin ditolak! Mohon izinkan akses lokasi di icon gembok browser Anda.");
+          } else if (err.code === 2) {
+            setLocError("Sinyal GPS tidak tersedia atau tidak terdeteksi.");
+          } else if (err.code === 3) {
+            setLocError("Waktu permintaan lokasi habis (Timeout). Coba lagi.");
+          } else {
+            setLocError("Terjadi kesalahan sistem saat akses GPS.");
+          }
+        },
+        { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+      );
+    } else {
+      setLocError("Peramban Anda tidak mendukung fitur GPS.");
+    }
+  };
+
+  // Get Location on Load
+  useEffect(() => {
+    fetchLocation();
+  }, [officeLoc]);
+
+  // Handle Camera Stream
+  useEffect(() => {
+    let stream;
+    if (isCameraOpen && !photoData) {
+      navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' } })
+        .then(s => {
+          stream = s;
+          if (videoRef.current) videoRef.current.srcObject = s;
+        })
+        .catch(err => alert("Gagal akses kamera! " + err.message));
+    }
+    return () => { if (stream) stream.getTracks().forEach(t => t.stop()); };
+  }, [isCameraOpen, photoData]);
+
+  const handleOpenAbsen = (type) => {
+    if (!location) return alert("Tunggu hingga lokasi GPS ditemukan!");
+    // Simulasi: Jika jauh, beri peringatan (Untuk demo, kita izinkan dengan warning)
+    if (distance > MAX_DISTANCE_METERS) {
+      const lanjut = window.confirm(`Anda berada ${distance}m dari kantor (Batas ${MAX_DISTANCE_METERS}m). Lanjutkan simulasi absen di luar jangkauan?`);
+      if (!lanjut) return;
+    }
+    setAbsenType(type);
+    setIsCameraOpen(true);
+    setPhotoData(null);
+  };
+
+  const takePhotoAndSubmit = () => {
+    if (videoRef.current) {
+      const canvas = document.createElement('canvas');
+      canvas.width = videoRef.current.videoWidth;
+      canvas.height = videoRef.current.videoHeight;
+      canvas.getContext('2d').drawImage(videoRef.current, 0, 0);
+      const photoBase64 = canvas.toDataURL('image/jpeg');
+      setPhotoData(photoBase64);
+      
+      // Simpan Log
+      addLog({
+        id: Date.now(),
+        userName: user.name,
+        type: absenType,
+        time: new Date().toLocaleTimeString('id-ID'),
+        date: new Date().toLocaleDateString('id-ID'),
+        photo: photoBase64,
+        status: distance <= MAX_DISTANCE_METERS ? 'Tepat Lokasi' : 'Luar Jangkauan'
+      });
+
+      setIsCameraOpen(false);
+      setSuccessMsg(`Berhasil Absen ${absenType}!`);
+      setTimeout(() => setSuccessMsg(''), 3000);
+    }
+  };
+
+  if (isCameraOpen) {
+    return (
+      <div className="fixed inset-0 bg-black z-50 flex flex-col">
+        <div className="p-4 flex justify-between items-center text-white bg-black/50 absolute top-0 w-full z-10">
+          <span className="font-semibold">Absen: {absenType}</span>
+          <button onClick={() => setIsCameraOpen(false)}><X className="w-8 h-8" /></button>
+        </div>
+        <div className="flex-1 relative flex items-center justify-center overflow-hidden">
+          {!photoData && (
+            <video ref={videoRef} autoPlay playsInline className="min-w-full min-h-full object-cover" />
+          )}
+          {photoData && (
+             <img src={photoData} alt="Hasil" className="min-w-full min-h-full object-cover" />
+          )}
+          
+          {/* Overlay Bingkai Wajah */}
+          {!photoData && (
+            <div className="absolute inset-0 border-[40px] border-black/40 rounded-full w-[300px] h-[400px] m-auto pointer-events-none"></div>
+          )}
+        </div>
+        <div className="h-32 bg-black flex items-center justify-center pb-8">
+          {!photoData ? (
+             <button onClick={takePhotoAndSubmit} className="w-16 h-16 bg-white rounded-full border-4 border-gray-300 flex items-center justify-center hover:bg-gray-200">
+               <div className="w-12 h-12 border-2 border-black rounded-full"></div>
+             </button>
+          ) : (
+            <p className="text-green-400 font-bold text-lg animate-pulse">Memproses Absensi...</p>
+          )}
         </div>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 flex flex-col">
-      {/* Header */}
-      <header className="bg-white shadow-sm sticky top-0 z-50">
-        <div className="max-w-7xl mx-auto px-4 py-3 flex justify-between items-center">
-          <div className="flex items-center gap-2">
-            <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center text-white font-bold">A</div>
-            <h1 className="font-bold text-gray-800 hidden sm:block">E-Absensi</h1>
-          </div>
-          
-          <div className="flex items-center gap-4">
-            <div className="text-right hidden sm:block">
-              <p className="text-sm font-medium text-gray-900">{currentUser.name}</p>
-              <p className="text-xs text-gray-500 capitalize">{currentUser.role}</p>
-            </div>
-            <button onClick={handleLogout} className="p-2 hover:bg-gray-100 rounded-full text-red-500">
-              <LogOut size={20} />
-            </button>
-          </div>
+    <div className="space-y-6">
+      {successMsg && (
+        <div className="bg-green-100 border border-green-400 text-green-700 px-4 py-3 rounded-xl flex items-center animate-bounce">
+          <CheckCircle className="w-5 h-5 mr-2" /> {successMsg}
         </div>
-      </header>
+      )}
 
-      {/* Main Content */}
-      <main className="flex-1 max-w-7xl w-full mx-auto p-4">
-        {currentUser.role === 'admin' ? (
-          <AdminDashboard 
-            users={users} 
-            setUsers={setUsers} 
-            logs={logs} 
-            announcements={announcements}
-            setAnnouncements={setAnnouncements}
-          />
-        ) : (
-          <EmployeeDashboard 
-            user={currentUser} 
-            logs={logs} 
-            setLogs={setLogs}
-            announcements={announcements}
-          />
-        )}
-      </main>
+      {/* Info Lokasi */}
+      <div className="bg-white p-4 rounded-xl border border-gray-100 shadow-sm">
+        <div className="flex items-start justify-between">
+          <div className="flex items-start">
+            <div className={`p-2 rounded-lg mr-3 ${distance !== null && distance <= MAX_DISTANCE_METERS ? 'bg-green-100 text-green-600' : 'bg-red-100 text-red-600'}`}>
+              <MapPin className="w-6 h-6" />
+            </div>
+            <div>
+              <h3 className="font-semibold text-gray-800">Status Lokasi (GPS)</h3>
+              {locError ? (
+                <p className="text-xs text-red-500 mt-1 font-medium">{locError}</p>
+              ) : (
+                <div>
+                  <p className="text-sm text-gray-500 mt-1">Jarak dari kantor: <strong className={distance <= MAX_DISTANCE_METERS ? 'text-green-600' : 'text-red-600'}>{distance} meter</strong></p>
+                  <p className="text-xs mt-1 font-medium">
+                    {distance <= MAX_DISTANCE_METERS ? <span className="text-green-600">✅ Lokasi Valid (Dalam Radius)</span> : <span className="text-red-500">❌ Di luar jangkauan {MAX_DISTANCE_METERS}m</span>}
+                  </p>
+                </div>
+              )}
+            </div>
+          </div>
+          <button onClick={fetchLocation} className="p-2 text-blue-500 hover:bg-blue-50 rounded-full transition-colors" title="Perbarui Lokasi">
+            <RefreshCw className="w-5 h-5" />
+          </button>
+        </div>
+      </div>
+
+      {/* Tombol Absen */}
+      <div className="grid grid-cols-2 gap-4">
+        <button onClick={() => handleOpenAbsen('Masuk Kerja')} className="bg-green-500 hover:bg-green-600 text-white p-4 rounded-2xl flex flex-col items-center justify-center shadow-sm transition-transform active:scale-95">
+          <CheckCircle className="w-8 h-8 mb-2" />
+          <span className="font-semibold">Absen Masuk</span>
+        </button>
+        <button onClick={() => handleOpenAbsen('Mulai Istirahat')} className="bg-yellow-500 hover:bg-yellow-600 text-white p-4 rounded-2xl flex flex-col items-center justify-center shadow-sm transition-transform active:scale-95">
+          <Clock className="w-8 h-8 mb-2" />
+          <span className="font-semibold">Istirahat</span>
+        </button>
+        <button onClick={() => handleOpenAbsen('Selesai Istirahat')} className="bg-blue-500 hover:bg-blue-600 text-white p-4 rounded-2xl flex flex-col items-center justify-center shadow-sm transition-transform active:scale-95">
+          <Activity className="w-8 h-8 mb-2" />
+          <span className="font-semibold">Kembali Kerja</span>
+        </button>
+        <button onClick={() => handleOpenAbsen('Pulang Kerja')} className="bg-red-500 hover:bg-red-600 text-white p-4 rounded-2xl flex flex-col items-center justify-center shadow-sm transition-transform active:scale-95">
+          <LogOut className="w-8 h-8 mb-2" />
+          <span className="font-semibold">Absen Pulang</span>
+        </button>
+      </div>
+
+      <div className="bg-blue-50 p-4 rounded-xl border border-blue-100 flex items-center">
+        <Camera className="w-5 h-5 text-blue-500 mr-2 flex-shrink-0" />
+        <p className="text-xs text-blue-800 leading-tight">Sistem mengharuskan foto selfie real-time saat absen untuk mencegah kecurangan (Anti-titip absen).</p>
+      </div>
     </div>
   );
 }
 
-// --- DASHBOARD ADMIN ---
+// --- TAB: PENGAJUAN ---
+function TabPengajuan({ addRequest }) {
+  const [type, setType] = useState('Cuti');
+  const [reason, setReason] = useState('');
+  const [date, setDate] = useState('');
+  const [photo, setPhoto] = useState(null); // Khusus sakit
 
-function AdminDashboard({ users, setUsers, logs, announcements, setAnnouncements }) {
-  const [view, setView] = useState('overview'); // overview, employees, reports, announcements
-  const [newUser, setNewUser] = useState({ name: '', email: '', department: '', role: 'employee' });
-
-  // Stats
-  const todayLogs = logs.filter(l => new Date(l.timestamp).toDateString() === new Date().toDateString());
-  const uniqueAttendees = new Set(todayLogs.map(l => l.userId)).size;
-
-  const handleAddUser = (e) => {
+  const handleSubmit = (e) => {
     e.preventDefault();
-    const id = users.length + 1;
-    setUsers([...users, { ...newUser, id, password: 'user' }]); // Default password
-    setNewUser({ name: '', email: '', department: '', role: 'employee' });
-    alert('Karyawan berhasil ditambahkan!');
-  };
-
-  const handleExport = () => {
-    // Simulasi Export CSV
-    let csvContent = "data:text/csv;charset=utf-8,ID,Nama,Tipe,Waktu,Lokasi\n";
-    logs.forEach(row => {
-      csvContent += `${row.id},${row.name},${row.type},${row.timestamp},"${row.location}"\n`;
+    if (type === 'Sakit' && !photo) return alert("Surat keterangan dokter wajib diunggah untuk absen Sakit!");
+    
+    addRequest({
+      id: Date.now(),
+      type, reason, date, 
+      photoAttached: photo !== null,
+      status: 'Menunggu'
     });
-    const encodedUri = encodeURI(csvContent);
-    const link = document.createElement("a");
-    link.setAttribute("href", encodedUri);
-    link.setAttribute("download", "laporan_absensi.csv");
-    document.body.appendChild(link);
-    link.click();
+    alert("Pengajuan berhasil dikirim ke Admin!");
+    setReason(''); setDate(''); setPhoto(null);
   };
 
-  const handleAddAnnouncement = (text) => {
-    const newAnn = {
-        id: Date.now(),
-        title: "Info Admin",
-        content: text,
-        date: new Date().toISOString().split('T')[0]
-    };
-    setAnnouncements([newAnn, ...announcements]);
+  const handlePhotoUpload = (e) => {
+    const file = e.target.files[0];
+    if(file) setPhoto(URL.createObjectURL(file)); // Mocking upload
   };
 
   return (
-    <div className="space-y-6">
-      {/* Navigation Tabs */}
-      <div className="flex overflow-x-auto gap-2 pb-2">
-        {[
-          { id: 'overview', label: 'Dashboard', icon: Home },
-          { id: 'employees', label: 'Data Karyawan', icon: Users },
-          { id: 'reports', label: 'Laporan Absensi', icon: FileText },
-          { id: 'announcements', label: 'Pengumuman', icon: Bell },
-        ].map((tab) => (
-          <button
-            key={tab.id}
-            onClick={() => setView(tab.id)}
-            className={`flex items-center gap-2 px-4 py-2 rounded-lg whitespace-nowrap transition ${
-              view === tab.id 
-                ? 'bg-blue-600 text-white shadow-md' 
-                : 'bg-white text-gray-600 hover:bg-gray-50'
-            }`}
-          >
-            <tab.icon size={18} />
-            {tab.label}
+    <div className="space-y-4">
+      <h2 className="font-bold text-gray-800 text-lg mb-4">Form Pengajuan Online</h2>
+      <form onSubmit={handleSubmit} className="bg-white p-5 rounded-xl border border-gray-100 shadow-sm space-y-4">
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">Jenis Pengajuan</label>
+          <select value={type} onChange={(e) => setType(e.target.value)} className="w-full border-gray-300 rounded-lg shadow-sm focus:border-blue-500 focus:ring-blue-500 bg-gray-50 p-2.5 outline-none border">
+            <option>Cuti</option>
+            <option>Izin</option>
+            <option>Sakit</option>
+          </select>
+        </div>
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">Tanggal</label>
+          <input type="date" required value={date} onChange={(e) => setDate(e.target.value)} className="w-full border-gray-300 rounded-lg shadow-sm focus:border-blue-500 focus:ring-blue-500 bg-gray-50 p-2.5 outline-none border" />
+        </div>
+        
+        {type === 'Sakit' && (
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Surat Dokter (Foto)</label>
+            <div className="border-2 border-dashed border-gray-300 rounded-lg p-4 text-center cursor-pointer hover:bg-gray-50 relative">
+              <input type="file" accept="image/*" onChange={handlePhotoUpload} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" required />
+              {photo ? (
+                <div className="flex items-center justify-center text-green-600 font-medium">
+                  <CheckCircle className="w-5 h-5 mr-2" /> Foto Terlampir
+                </div>
+              ) : (
+                <div className="flex flex-col items-center text-gray-500">
+                  <ImageIcon className="w-8 h-8 mb-1 text-gray-400" />
+                  <span className="text-xs">Tap untuk unggah foto</span>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">Keterangan / Alasan</label>
+          <textarea required value={reason} onChange={(e) => setReason(e.target.value)} rows="3" className="w-full border-gray-300 rounded-lg shadow-sm focus:border-blue-500 focus:ring-blue-500 bg-gray-50 p-2.5 outline-none border" placeholder="Tuliskan alasan detail..."></textarea>
+        </div>
+
+        <button type="submit" className="w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-3 rounded-xl transition-colors">
+          Kirim Pengajuan
+        </button>
+      </form>
+    </div>
+  );
+}
+
+// --- TAB: LAPORAN HARIAN ---
+function TabLaporan({ addReport }) {
+  const [content, setContent] = useState('');
+
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    addReport({
+      id: Date.now(),
+      date: new Date().toLocaleDateString('id-ID'),
+      content
+    });
+    alert("Laporan kegiatan berhasil disimpan!");
+    setContent('');
+  };
+
+  return (
+    <div className="space-y-4">
+      <h2 className="font-bold text-gray-800 text-lg mb-4">Laporan Kegiatan Harian</h2>
+      <div className="bg-yellow-50 text-yellow-800 p-3 rounded-lg text-sm border border-yellow-200 mb-4 flex items-start">
+        <FileText className="w-5 h-5 mr-2 flex-shrink-0" />
+        Isi laporan aktivitas Anda hari ini sebelum melakukan Absen Pulang.
+      </div>
+      <form onSubmit={handleSubmit} className="bg-white p-5 rounded-xl border border-gray-100 shadow-sm space-y-4">
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">Aktivitas Hari Ini</label>
+          <textarea 
+            required value={content} onChange={(e) => setContent(e.target.value)} 
+            rows="6" 
+            className="w-full border-gray-300 rounded-lg shadow-sm focus:border-blue-500 focus:ring-blue-500 bg-gray-50 p-2.5 outline-none border" 
+            placeholder="- Meeting dengan klien A&#10;- Menyelesaikan modul B&#10;- Fix bug di halaman C..."
+          ></textarea>
+        </div>
+        <button type="submit" className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-medium py-3 rounded-xl transition-colors">
+          Simpan Laporan
+        </button>
+      </form>
+    </div>
+  );
+}
+
+
+// ==========================================
+//           DASHBOARD ADMIN
+// ==========================================
+function AdminDashboard({ user, onLogout, logs, requests, reports, officeLoc, setOfficeLoc, updateRequestStatus }) {
+  const [activeTab, setActiveTab] = useState('monitoring');
+
+  const menuItems = [
+    { id: 'monitoring', label: 'Monitoring Real-time', icon: <Activity /> },
+    { id: 'validasi', label: 'Validasi Pengajuan', icon: <CheckCircle /> },
+    { id: 'laporan', label: 'Rekap Laporan', icon: <FileText /> },
+    { id: 'pengaturan', label: 'Pengaturan Sistem', icon: <MapPin /> },
+  ];
+
+  return (
+    <div className="flex h-screen bg-gray-100">
+      {/* Sidebar Admin (Desktop) / Bottom Nav (Mobile) - Simplified for Single File */}
+      <div className="w-64 bg-slate-900 text-white hidden md:flex flex-col">
+        <div className="p-6 bg-slate-950 border-b border-slate-800 flex items-center">
+          <ShieldCheck className="w-8 h-8 text-blue-400 mr-3" />
+          <div>
+            <h1 className="font-bold text-lg leading-tight">Admin Panel</h1>
+            <p className="text-xs text-slate-400">All-in-One Absensi</p>
+          </div>
+        </div>
+        <div className="flex-1 py-4">
+          {menuItems.map(item => (
+            <button
+              key={item.id}
+              onClick={() => setActiveTab(item.id)}
+              className={`w-full flex items-center px-6 py-3 text-sm transition-colors ${activeTab === item.id ? 'bg-blue-600 text-white border-r-4 border-blue-400' : 'text-slate-300 hover:bg-slate-800'}`}
+            >
+              <span className="mr-3">{React.cloneElement(item.icon, { className: 'w-5 h-5' })}</span>
+              {item.label}
+            </button>
+          ))}
+        </div>
+        <div className="p-4 border-t border-slate-800">
+          <button onClick={onLogout} className="w-full flex items-center justify-center py-2 px-4 bg-red-500/10 text-red-400 rounded-lg hover:bg-red-500/20 transition-colors">
+            <LogOut className="w-4 h-4 mr-2" /> Keluar
           </button>
-        ))}
+        </div>
       </div>
 
-      {view === 'overview' && (
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <Card className="bg-gradient-to-br from-blue-500 to-blue-600 text-white border-none">
-            <h3 className="text-blue-100 font-medium">Total Karyawan</h3>
-            <p className="text-3xl font-bold mt-2">{users.length - 1}</p> {/* Exclude admin */}
-          </Card>
-          <Card className="bg-gradient-to-br from-green-500 to-green-600 text-white border-none">
-            <h3 className="text-green-100 font-medium">Hadir Hari Ini</h3>
-            <p className="text-3xl font-bold mt-2">{uniqueAttendees}</p>
-          </Card>
-          <Card className="bg-gradient-to-br from-purple-500 to-purple-600 text-white border-none">
-            <h3 className="text-purple-100 font-medium">Belum Hadir</h3>
-            <p className="text-3xl font-bold mt-2">{(users.length - 1) - uniqueAttendees}</p>
-          </Card>
-
-          <div className="md:col-span-3">
-             <h3 className="text-lg font-bold text-gray-800 mb-4">Aktivitas Terbaru</h3>
-             <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
-                <table className="w-full text-left text-sm">
-                  <thead className="bg-gray-50 border-b">
-                    <tr>
-                      <th className="p-4 font-medium text-gray-600">Nama</th>
-                      <th className="p-4 font-medium text-gray-600">Waktu</th>
-                      <th className="p-4 font-medium text-gray-600">Tipe</th>
-                      <th className="p-4 font-medium text-gray-600">Lokasi</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {logs.slice(0, 5).map(log => (
-                      <tr key={log.id} className="border-b last:border-0 hover:bg-gray-50">
-                        <td className="p-4 font-medium">{log.name}</td>
-                        <td className="p-4 text-gray-500">{formatDate(log.timestamp)}</td>
-                        <td className="p-4">
-                          <Badge type={log.type === 'Masuk' ? 'success' : log.type === 'Istirahat' ? 'warning' : 'danger'}>{log.type}</Badge>
-                        </td>
-                        <td className="p-4 text-gray-500 truncate max-w-xs">{log.location}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-             </div>
-          </div>
+      {/* Konten Utama Admin */}
+      <div className="flex-1 flex flex-col overflow-hidden">
+        {/* Mobile Header */}
+        <div className="md:hidden bg-slate-900 text-white p-4 flex justify-between items-center">
+           <div className="flex items-center">
+             <ShieldCheck className="w-6 h-6 text-blue-400 mr-2" />
+             <h1 className="font-bold">Admin Panel</h1>
+           </div>
+           <button onClick={onLogout}><LogOut className="w-5 h-5 text-red-400" /></button>
         </div>
-      )}
+        
+        {/* Mobile Navigation Dropdown */}
+        <div className="md:hidden bg-white border-b p-2">
+          <select 
+            value={activeTab} 
+            onChange={(e) => setActiveTab(e.target.value)}
+            className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 font-medium text-slate-700 outline-none"
+          >
+            {menuItems.map(item => <option key={item.id} value={item.id}>{item.label}</option>)}
+          </select>
+        </div>
 
-      {view === 'employees' && (
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          <div className="lg:col-span-2">
-            <div className="bg-white rounded-xl shadow-sm border overflow-hidden">
-                <div className="p-4 border-b flex justify-between items-center bg-gray-50">
-                    <h3 className="font-bold text-gray-700">Daftar Karyawan</h3>
-                    <Button variant="outline" icon={Upload} onClick={() => alert("Fitur Import Excel akan membuka file dialog.")}>Import Excel</Button>
-                </div>
-                <table className="w-full text-left text-sm">
-                  <thead className="bg-gray-50 border-b">
-                    <tr>
-                      <th className="p-3">Nama</th>
-                      <th className="p-3">Email</th>
-                      <th className="p-3">Dept</th>
-                      <th className="p-3">Aksi</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {users.filter(u => u.role !== 'admin').map(u => (
-                      <tr key={u.id} className="border-b">
-                        <td className="p-3 font-medium">{u.name}</td>
-                        <td className="p-3 text-gray-500">{u.email}</td>
-                        <td className="p-3"><Badge>{u.department}</Badge></td>
-                        <td className="p-3">
-                            <button className="text-blue-600 hover:text-blue-800 text-xs font-semibold">Edit</button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+        <main className="flex-1 overflow-y-auto p-4 md:p-8">
+          <div className="flex justify-between items-end mb-8">
+            <div>
+              <h2 className="text-2xl font-bold text-gray-800">{menuItems.find(i=>i.id===activeTab).label}</h2>
+              <p className="text-gray-500 text-sm mt-1">Kelola data absensi dan pengaturan sistem</p>
             </div>
+            {activeTab === 'laporan' && (
+              <button onClick={()=>alert("Mengekspor data ke PDF/Excel (Simulasi)")} className="hidden md:flex items-center bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg font-medium text-sm transition-colors">
+                <Download className="w-4 h-4 mr-2" /> Export Data
+              </button>
+            )}
           </div>
 
-          <div>
-             <Card>
-                <h3 className="font-bold text-gray-800 mb-4">Tambah Anggota</h3>
-                <form onSubmit={handleAddUser} className="space-y-3">
-                    <input className="w-full p-2 border rounded" placeholder="Nama Lengkap" value={newUser.name} onChange={e => setNewUser({...newUser, name: e.target.value})} required />
-                    <input className="w-full p-2 border rounded" type="email" placeholder="Email" value={newUser.email} onChange={e => setNewUser({...newUser, email: e.target.value})} required />
-                    <select className="w-full p-2 border rounded" value={newUser.department} onChange={e => setNewUser({...newUser, department: e.target.value})} required>
-                        <option value="">Pilih Departemen</option>
-                        <option value="IT">IT</option>
-                        <option value="HRD">HRD</option>
-                        <option value="Finance">Finance</option>
-                        <option value="Marketing">Marketing</option>
-                    </select>
-                    <Button className="w-full" variant="success">Simpan Data</Button>
-                </form>
-             </Card>
+          {activeTab === 'monitoring' && <AdminMonitoring logs={logs} />}
+          {activeTab === 'validasi' && <AdminValidasi requests={requests} updateStatus={updateRequestStatus} />}
+          {activeTab === 'laporan' && <AdminLaporan reports={reports} />}
+          {activeTab === 'pengaturan' && <AdminPengaturan officeLoc={officeLoc} setOfficeLoc={setOfficeLoc} />}
+        </main>
+      </div>
+    </div>
+  );
+}
+
+// Sub-komponen Admin: Monitoring
+function AdminMonitoring({ logs }) {
+  return (
+    <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+      <div className="overflow-x-auto">
+        <table className="w-full text-left border-collapse">
+          <thead>
+            <tr className="bg-slate-50 text-slate-600 border-b border-gray-200 text-sm">
+              <th className="p-4 font-semibold">Pegawai</th>
+              <th className="p-4 font-semibold">Jenis Absen</th>
+              <th className="p-4 font-semibold">Waktu & Tanggal</th>
+              <th className="p-4 font-semibold">Status Lokasi</th>
+              <th className="p-4 font-semibold">Foto Validasi</th>
+            </tr>
+          </thead>
+          <tbody>
+            {logs.length === 0 ? (
+              <tr><td colSpan="5" className="p-8 text-center text-gray-400">Belum ada data absensi hari ini.</td></tr>
+            ) : (
+              logs.map(log => (
+                <tr key={log.id} className="border-b border-gray-100 hover:bg-slate-50">
+                  <td className="p-4 font-medium text-gray-800">{log.userName}</td>
+                  <td className="p-4">
+                    <span className={`px-2 py-1 rounded text-xs font-medium 
+                      ${log.type.includes('Masuk') ? 'bg-green-100 text-green-700' : 
+                        log.type.includes('Pulang') ? 'bg-red-100 text-red-700' : 'bg-yellow-100 text-yellow-700'}`}>
+                      {log.type}
+                    </span>
+                  </td>
+                  <td className="p-4 text-sm text-gray-600">{log.date} - {log.time}</td>
+                  <td className="p-4">
+                     <span className={`flex items-center text-xs font-medium ${log.status === 'Tepat Lokasi' ? 'text-green-600' : 'text-red-500'}`}>
+                       {log.status === 'Tepat Lokasi' ? <CheckCircle className="w-3 h-3 mr-1"/> : <XCircle className="w-3 h-3 mr-1"/>}
+                       {log.status}
+                     </span>
+                  </td>
+                  <td className="p-4">
+                    <img src={log.photo} alt="Validasi" className="w-12 h-12 object-cover rounded border bg-gray-200" />
+                  </td>
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+// Sub-komponen Admin: Validasi
+function AdminValidasi({ requests, updateStatus }) {
+  return (
+    <div className="space-y-4">
+      {requests.length === 0 ? (
+        <div className="bg-white p-8 rounded-xl border text-center text-gray-400">Belum ada pengajuan masuk.</div>
+      ) : (
+        requests.map(req => (
+          <div key={req.id} className="bg-white p-5 rounded-xl border border-gray-100 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <div>
+              <div className="flex items-center mb-1">
+                <span className="font-bold text-gray-800 mr-2">Budi Santoso (Pegawai)</span>
+                <span className="px-2 py-0.5 bg-blue-100 text-blue-700 text-xs font-semibold rounded">{req.type}</span>
+                {req.status !== 'Menunggu' && (
+                  <span className={`ml-2 px-2 py-0.5 text-xs font-semibold rounded ${req.status === 'Disetujui' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+                    {req.status}
+                  </span>
+                )}
+              </div>
+              <p className="text-sm text-gray-600"><Calendar className="w-4 h-4 inline mr-1 text-gray-400" /> {req.date}</p>
+              <p className="text-sm text-gray-700 mt-2 bg-gray-50 p-2 rounded">"{req.reason}"</p>
+              {req.photoAttached && <p className="text-xs text-blue-600 mt-2 font-medium flex items-center"><ImageIcon className="w-3 h-3 mr-1"/> 1 Dokumen Terlampir (Surat Dokter)</p>}
+            </div>
+            
+            {req.status === 'Menunggu' && (
+              <div className="flex gap-2">
+                <button onClick={() => updateStatus(req.id, 'Ditolak')} className="px-4 py-2 border border-red-200 text-red-600 rounded-lg hover:bg-red-50 text-sm font-medium transition-colors">Tolak</button>
+                <button onClick={() => updateStatus(req.id, 'Disetujui')} className="px-4 py-2 bg-green-500 hover:bg-green-600 text-white rounded-lg text-sm font-medium transition-colors">Setujui</button>
+              </div>
+            )}
           </div>
-        </div>
-      )}
-
-      {view === 'reports' && (
-        <div className="space-y-4">
-            <div className="flex justify-between items-center bg-white p-4 rounded-xl shadow-sm">
-                <h2 className="font-bold text-gray-700">Laporan Kehadiran</h2>
-                <Button icon={Download} onClick={handleExport}>Export ke Excel</Button>
-            </div>
-            <div className="bg-white rounded-xl shadow-sm border overflow-hidden overflow-x-auto">
-                <table className="w-full text-left text-sm">
-                    <thead className="bg-gray-50 border-b">
-                    <tr>
-                        <th className="p-4">Tanggal</th>
-                        <th className="p-4">Nama</th>
-                        <th className="p-4">Status</th>
-                        <th className="p-4">Waktu</th>
-                        <th className="p-4">Bukti Foto</th>
-                    </tr>
-                    </thead>
-                    <tbody>
-                    {logs.map(log => (
-                        <tr key={log.id} className="border-b hover:bg-gray-50">
-                        <td className="p-4">{new Date(log.timestamp).toLocaleDateString()}</td>
-                        <td className="p-4 font-medium">{log.name}</td>
-                        <td className="p-4"><Badge type={log.type === 'Masuk' ? 'success' : log.type === 'Istirahat' ? 'warning' : 'danger'}>{log.type}</Badge></td>
-                        <td className="p-4">{new Date(log.timestamp).toLocaleTimeString()}</td>
-                        <td className="p-4">
-                            {log.photo ? (
-                                <img src={log.photo} alt="Bukti" className="w-10 h-10 rounded-full object-cover border" />
-                            ) : <span className="text-gray-400 text-xs">No Photo</span>}
-                        </td>
-                        </tr>
-                    ))}
-                    </tbody>
-                </table>
-            </div>
-        </div>
-      )}
-
-      {view === 'announcements' && (
-         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <Card>
-                <h3 className="font-bold mb-4">Buat Pengumuman Baru</h3>
-                <form onSubmit={(e) => {
-                    e.preventDefault();
-                    handleAddAnnouncement(e.target.content.value);
-                    e.target.reset();
-                }}>
-                    <textarea name="content" className="w-full p-3 border rounded-lg h-32 focus:ring-2 focus:ring-blue-500 focus:outline-none" placeholder="Tulis pengumuman di sini..."></textarea>
-                    <Button className="w-full mt-3">Kirim Pengumuman</Button>
-                </form>
-            </Card>
-            <div className="space-y-3">
-                {announcements.map(ann => (
-                    <div key={ann.id} className="bg-white p-4 rounded-lg border shadow-sm">
-                        <div className="flex justify-between items-start mb-2">
-                            <h4 className="font-bold text-gray-800">{ann.title}</h4>
-                            <span className="text-xs text-gray-500">{ann.date}</span>
-                        </div>
-                        <p className="text-sm text-gray-600">{ann.content}</p>
-                    </div>
-                ))}
-            </div>
-         </div>
+        ))
       )}
     </div>
   );
 }
 
-// --- DASHBOARD KARYAWAN ---
+// Sub-komponen Admin: Laporan
+function AdminLaporan({ reports }) {
+  return (
+    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+       {reports.length === 0 ? (
+         <div className="col-span-full bg-white p-8 rounded-xl border text-center text-gray-400">Belum ada laporan kegiatan disubmit.</div>
+       ) : (
+         reports.map(rep => (
+           <div key={rep.id} className="bg-white p-5 rounded-xl border border-gray-100 shadow-sm">
+             <div className="flex justify-between items-center mb-3 border-b pb-2">
+               <span className="font-bold text-gray-800">Budi Santoso</span>
+               <span className="text-xs text-gray-500 flex items-center"><Clock className="w-3 h-3 mr-1"/> {rep.date}</span>
+             </div>
+             <p className="text-sm text-gray-700 whitespace-pre-line leading-relaxed">{rep.content}</p>
+           </div>
+         ))
+       )}
+    </div>
+  );
+}
 
-function EmployeeDashboard({ user, logs, setLogs, announcements }) {
-  const [activeTab, setActiveTab] = useState('absen'); // absen, history, permit
-  const [isCameraOpen, setIsCameraOpen] = useState(false);
-  const [location, setLocation] = useState(null);
-  const [locationError, setLocationError] = useState(null);
-  const [photo, setPhoto] = useState(null);
-  const videoRef = useRef(null);
-  const canvasRef = useRef(null);
+// Sub-komponen Admin: Pengaturan Lokasi
+function AdminPengaturan({ officeLoc, setOfficeLoc }) {
+  const [newLat, setNewLat] = useState(officeLoc.lat);
+  const [newLng, setNewLng] = useState(officeLoc.lng);
 
-  // Filter logs for current user
-  const myLogs = logs.filter(l => l.userId === user.id).sort((a,b) => new Date(b.timestamp) - new Date(a.timestamp));
-
-  // Initialize Camera
-  const startCamera = async () => {
-    try {
-      setIsCameraOpen(true);
-      const stream = await navigator.mediaDevices.getUserMedia({ video: true });
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-      }
-    } catch (err) {
-      alert("Gagal mengakses kamera. Pastikan izin diberikan.");
-      setIsCameraOpen(false);
-    }
+  const handleUpdate = () => {
+    setOfficeLoc({ lat: parseFloat(newLat), lng: parseFloat(newLng) });
+    alert("Titik lokasi kantor berhasil diperbarui!");
   };
 
-  // Capture Photo
-  const takePhoto = () => {
-    const video = videoRef.current;
-    const canvas = canvasRef.current;
-    if (video && canvas) {
-      const context = canvas.getContext('2d');
-      canvas.width = video.videoWidth;
-      canvas.height = video.videoHeight;
-      context.drawImage(video, 0, 0, canvas.width, canvas.height);
-      const dataUrl = canvas.toDataURL('image/png');
-      setPhoto(dataUrl);
-      
-      // Stop stream
-      const stream = video.srcObject;
-      const tracks = stream.getTracks();
-      tracks.forEach(track => track.stop());
-      setIsCameraOpen(false);
-    }
-  };
-
-  // Get Location
-  const getLocation = () => {
+  const setAsCurrentLocation = () => {
     if (navigator.geolocation) {
       navigator.geolocation.getCurrentPosition(
-        (position) => {
-          setLocation({
-            lat: position.coords.latitude,
-            lng: position.coords.longitude
-          });
-          setLocationError(null);
+        (pos) => {
+          setNewLat(pos.coords.latitude);
+          setNewLng(pos.coords.longitude);
         },
-        (error) => {
-          setLocationError("Gagal mendapatkan lokasi. Pastikan GPS aktif.");
-        }
+        () => alert("Gagal mendapatkan lokasi saat ini.")
       );
-    } else {
-      setLocationError("Browser tidak mendukung Geolocation.");
     }
-  };
-
-  useEffect(() => {
-    if (activeTab === 'absen') {
-      getLocation();
-    }
-  }, [activeTab]);
-
-  const handleSubmitAttendance = (type) => {
-    if (!location) return alert("Menunggu lokasi...");
-    if (!photo && (type === 'Masuk' || type === 'Istirahat' || type === 'Pulang')) return alert("Wajib foto selfie!");
-
-    const newLog = {
-      id: Date.now(),
-      userId: user.id,
-      name: user.name,
-      type: type,
-      timestamp: new Date().toISOString(),
-      location: `${location.lat.toFixed(4)}, ${location.lng.toFixed(4)}`,
-      photo: photo,
-      status: 'Hadir'
-    };
-
-    setLogs([newLog, ...logs]);
-    setPhoto(null);
-    alert(`Absen ${type} Berhasil!`);
   };
 
   return (
-    <div className="max-w-2xl mx-auto space-y-6">
+    <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 max-w-2xl">
+      <h3 className="font-bold text-lg mb-4 flex items-center"><Map className="w-5 h-5 mr-2 text-blue-500"/> Pengaturan Kunci Lokasi (GPS)</h3>
+      <p className="text-sm text-gray-600 mb-6">Tentukan titik kordinat pusat kantor. Karyawan hanya bisa melakukan absensi dalam radius {MAX_DISTANCE_METERS} meter dari titik ini.</p>
       
-      {/* Welcome Card */}
-      <div className="bg-gradient-to-r from-blue-600 to-indigo-600 rounded-2xl p-6 text-white shadow-lg">
-        <h2 className="text-2xl font-bold">Halo, {user.name} 👋</h2>
-        <p className="opacity-90 mt-1">{user.department} Department</p>
-        <div className="mt-6 flex gap-4 text-sm bg-white/10 p-3 rounded-lg backdrop-blur-sm">
-           <div className="flex items-center gap-2">
-              <Clock size={16} />
-              <span>{new Date().toLocaleTimeString('id-ID', {hour: '2-digit', minute:'2-digit'})}</span>
-           </div>
-           <div className="h-4 w-px bg-white/30"></div>
-           <div className="flex items-center gap-2">
-              <Calendar size={16} />
-              <span>{new Date().toLocaleDateString('id-ID', { weekday: 'long', day: 'numeric', month: 'short' })}</span>
-           </div>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+        <div>
+          <label className="block text-xs font-bold text-gray-500 uppercase tracking-wide mb-1">Latitude</label>
+          <input type="number" step="any" value={newLat} onChange={(e) => setNewLat(e.target.value)} className="w-full border-gray-300 rounded-lg bg-gray-50 p-3 outline-none border focus:border-blue-500" />
+        </div>
+        <div>
+          <label className="block text-xs font-bold text-gray-500 uppercase tracking-wide mb-1">Longitude</label>
+          <input type="number" step="any" value={newLng} onChange={(e) => setNewLng(e.target.value)} className="w-full border-gray-300 rounded-lg bg-gray-50 p-3 outline-none border focus:border-blue-500" />
         </div>
       </div>
 
-      {/* Action Grid */}
-      <div className="grid grid-cols-3 gap-3">
-          <button onClick={() => setActiveTab('absen')} className={`p-4 rounded-xl flex flex-col items-center gap-2 transition ${activeTab === 'absen' ? 'bg-blue-100 text-blue-700 ring-2 ring-blue-500' : 'bg-white shadow-sm text-gray-600'}`}>
-              <Camera />
-              <span className="text-xs font-bold">Absen</span>
-          </button>
-          <button onClick={() => setActiveTab('history')} className={`p-4 rounded-xl flex flex-col items-center gap-2 transition ${activeTab === 'history' ? 'bg-blue-100 text-blue-700 ring-2 ring-blue-500' : 'bg-white shadow-sm text-gray-600'}`}>
-              <Clock />
-              <span className="text-xs font-bold">Riwayat</span>
-          </button>
-          <button onClick={() => setActiveTab('permit')} className={`p-4 rounded-xl flex flex-col items-center gap-2 transition ${activeTab === 'permit' ? 'bg-blue-100 text-blue-700 ring-2 ring-blue-500' : 'bg-white shadow-sm text-gray-600'}`}>
-              <FileText />
-              <span className="text-xs font-bold">Izin/Cuti</span>
-          </button>
+      <div className="flex flex-col sm:flex-row gap-3 mt-6">
+        <button onClick={setAsCurrentLocation} className="flex items-center justify-center px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-medium rounded-lg transition-colors text-sm">
+          <MapPin className="w-4 h-4 mr-2" />
+          Gunakan Lokasi Saya Saat Ini
+        </button>
+        <button onClick={handleUpdate} className="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-medium py-2 rounded-lg transition-colors text-sm">
+          Simpan Konfigurasi
+        </button>
       </div>
-
-      {/* Main Feature Area */}
-      {activeTab === 'absen' && (
-        <Card className="space-y-6">
-           {/* Location Status */}
-           <div className="flex items-center justify-between bg-gray-50 p-3 rounded-lg">
-               <div className="flex items-center gap-3">
-                   <div className={`w-8 h-8 rounded-full flex items-center justify-center ${location ? 'bg-green-100 text-green-600' : 'bg-red-100 text-red-600'}`}>
-                       <MapPin size={16} />
-                   </div>
-                   <div>
-                       <p className="text-xs text-gray-500 font-medium">Lokasi Anda</p>
-                       <p className="text-sm font-bold text-gray-800">
-                           {location ? `${location.lat.toFixed(4)}, ${location.lng.toFixed(4)}` : 'Mencari lokasi...'}
-                       </p>
-                   </div>
-               </div>
-               {location && <Badge type="success">Akurat</Badge>}
-           </div>
-
-           {/* Camera Preview */}
-           <div className="relative bg-black rounded-xl overflow-hidden aspect-[4/3] flex items-center justify-center">
-              {!isCameraOpen && !photo && (
-                <div className="text-center">
-                    <p className="text-gray-400 mb-4 text-sm">Kamera belum aktif</p>
-                    <Button onClick={startCamera} variant="outline" className="bg-white/10 text-white border-white/20 hover:bg-white/20">Buka Kamera</Button>
-                </div>
-              )}
-              
-              {isCameraOpen && (
-                  <video ref={videoRef} autoPlay playsInline className="w-full h-full object-cover"></video>
-              )}
-              
-              {photo && (
-                  <img src={photo} alt="Captured" className="w-full h-full object-cover" />
-              )}
-
-              {/* Camera Controls */}
-              {isCameraOpen && (
-                  <div className="absolute bottom-4 left-0 right-0 flex justify-center">
-                      <button onClick={takePhoto} className="w-16 h-16 bg-white rounded-full border-4 border-gray-300 flex items-center justify-center shadow-lg active:scale-95 transition">
-                          <div className="w-12 h-12 bg-red-500 rounded-full"></div>
-                      </button>
-                  </div>
-              )}
-           </div>
-            
-           {/* Action Buttons */}
-           {photo && (
-               <div className="flex flex-col gap-3">
-                   <Button variant="success" onClick={() => handleSubmitAttendance('Masuk')}>Absen Masuk</Button>
-                   <Button variant="warning" onClick={() => handleSubmitAttendance('Istirahat')}>Absen Istirahat</Button>
-                   <Button variant="danger" onClick={() => handleSubmitAttendance('Pulang')}>Absen Pulang</Button>
-               </div>
-           )}
-
-           {photo && (
-               <Button variant="outline" className="w-full" onClick={() => setPhoto(null)}>Foto Ulang</Button>
-           )}
-        </Card>
-      )}
-
-      {activeTab === 'history' && (
-          <div className="space-y-4">
-              <h3 className="font-bold text-gray-700">Riwayat Bulan Ini</h3>
-              {myLogs.length === 0 ? (
-                  <div className="text-center py-8 text-gray-500 bg-white rounded-xl border border-dashed">
-                      Belum ada riwayat absensi.
-                  </div>
-              ) : (
-                  myLogs.map(log => (
-                      <div key={log.id} className="bg-white p-4 rounded-xl shadow-sm border flex items-center gap-4">
-                          <div className={`w-12 h-12 rounded-full flex items-center justify-center shrink-0 ${log.type === 'Masuk' ? 'bg-green-100 text-green-600' : log.type === 'Istirahat' ? 'bg-yellow-100 text-yellow-600' : 'bg-red-100 text-red-600'}`}>
-                              {log.type === 'Masuk' ? <LogOut className="rotate-180" size={20} /> : log.type === 'Istirahat' ? <Coffee size={20} /> : <LogOut size={20} />}
-                          </div>
-                          <div className="flex-1">
-                              <h4 className="font-bold text-gray-800">{log.type}</h4>
-                              <p className="text-xs text-gray-500">{formatDate(log.timestamp)}</p>
-                              <p className="text-xs text-gray-400 mt-1 flex items-center gap-1"><MapPin size={10}/> {log.location}</p>
-                          </div>
-                          {log.photo && (
-                              <img src={log.photo} className="w-12 h-12 rounded-lg object-cover border" alt="Proof" />
-                          )}
-                      </div>
-                  ))
-              )}
-          </div>
-      )}
-
-      {/* Pengumuman Widget */}
-      <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-4">
-          <div className="flex items-center gap-2 mb-2 text-yellow-800 font-bold">
-              <Bell size={18} />
-              <h4>Pengumuman Kantor</h4>
-          </div>
-          <ul className="space-y-3">
-              {announcements.slice(0, 2).map(ann => (
-                  <li key={ann.id} className="text-sm border-b border-yellow-200 pb-2 last:border-0 last:pb-0">
-                      <p className="font-semibold text-gray-800">{ann.title}</p>
-                      <p className="text-gray-600">{ann.content}</p>
-                  </li>
-              ))}
-          </ul>
-      </div>
-
-      <canvas ref={canvasRef} className="hidden"></canvas>
     </div>
   );
 }
