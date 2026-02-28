@@ -47,13 +47,6 @@
         const db = getFirestore(app);
         const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-absensi-app';
 
-        // --- DATA DUMMY AKUN ---
-        const initialUsers = [
-          { id: 1, username: 'budi', password: '123', name: 'Budi Santoso', role: 'employee', department: 'IT' },
-          { id: 2, username: 'siti', password: '123', name: 'Siti Aminah', role: 'employee', department: 'Marketing' },
-          { id: 99, username: 'admin', password: 'admin', name: 'Admin Pusat', role: 'admin' }
-        ];
-
         // --- FUNGSI HELPER ---
         function getDistanceFromLatLonInM(lat1, lon1, lat2, lon2) {
           const R = 6371000; 
@@ -68,7 +61,6 @@
         // Fungsi Export CSV
         function exportToCSV(data, filename) {
             if (data.length === 0) return;
-            // Filter out base64 photos and internal IDs from export
             const cleanData = data.map(({ dbId, photo, ...rest }) => rest);
             const headers = Object.keys(cleanData[0]).join(',');
             const rows = cleanData.map(obj => Object.values(obj).map(val => `"${val}"`).join(',')).join('\n');
@@ -92,6 +84,8 @@
           const [reports, setReports] = useState([]);
           const [officeLoc, setOfficeLoc] = useState({ lat: -6.200000, lng: 106.816666 });
           const MAX_DISTANCE_METERS = 100;
+
+          const showToast = (msg) => { setToastMsg(msg); setTimeout(() => setToastMsg(''), 3000); };
 
           // Autentikasi Cloud Setup
           useEffect(() => {
@@ -119,7 +113,6 @@
           useEffect(() => {
             if (!firebaseUser) return;
 
-            // Paths
             const logsRef = collection(db, 'artifacts', appId, 'public', 'data', 'logs');
             const reqRef = collection(db, 'artifacts', appId, 'public', 'data', 'requests');
             const repRef = collection(db, 'artifacts', appId, 'public', 'data', 'reports');
@@ -127,7 +120,7 @@
 
             const unsubLogs = onSnapshot(logsRef, (snap) => {
               const data = snap.docs.map(doc => ({ dbId: doc.id, ...doc.data() }));
-              setLogs(data.sort((a,b) => b.timestamp - a.timestamp)); // Urutkan terbaru
+              setLogs(data.sort((a,b) => b.timestamp - a.timestamp)); 
             }, (err) => console.error(err));
 
             const unsubReqs = onSnapshot(reqRef, (snap) => {
@@ -149,8 +142,6 @@
           }, [firebaseUser]);
 
           // Fungsi Tulis ke Database
-          const showToast = (msg) => { setToastMsg(msg); setTimeout(() => setToastMsg(''), 3000); };
-
           const handleAddLog = async (log) => {
              await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'logs'), { ...log, timestamp: Date.now() });
              showToast("Absen berhasil disimpan ke Cloud!");
@@ -172,7 +163,6 @@
              showToast("Lokasi Kantor Pusat berhasil diperbarui.");
           };
           const handleClearAllLogs = async () => {
-             // Simulasi hapus semua log (di production sebaiknya di-batch)
              showToast("Mulai menghapus data log...");
              const snapshot = await getDocs(collection(db, 'artifacts', appId, 'public', 'data', 'logs'));
              snapshot.forEach(async (document) => {
@@ -181,20 +171,93 @@
              showToast("Data log absensi dibersihkan!");
           };
 
-          // --- UI LOGIN ---
+          // --- UI LOGIN & REGISTER ---
+          const [isRegistering, setIsRegistering] = useState(false);
           const [username, setUsername] = useState('');
           const [password, setPassword] = useState('');
           const [loginError, setLoginError] = useState('');
+          const [successMsg, setSuccessMsg] = useState('');
 
-          const handleLogin = (e) => {
+          const [regName, setRegName] = useState('');
+          const [regDept, setRegDept] = useState('');
+          const [regUsername, setRegUsername] = useState('');
+          const [regPassword, setRegPassword] = useState('');
+
+          const handleLogin = async (e) => {
             e.preventDefault();
-            const user = initialUsers.find(u => u.username === username && u.password === password);
-            if (user) {
-              setCurrentUser(user);
-              setLoginError('');
+            if (!firebaseUser) {
+               setLoginError('Tunggu hingga terhubung ke Cloud...');
+               return;
+            }
+            setLoginError('');
+
+            // Validasi Admin
+            if (username === 'admin' && password === 'Karsa43') {
+              setCurrentUser({ id: 99, username: 'admin', name: 'Admin Pusat', role: 'admin' });
               setUsername(''); setPassword('');
-            } else {
-              setLoginError('Username atau password salah!');
+              return;
+            }
+
+            try {
+              // Validasi Karyawan dari Database
+              const usersSnap = await getDocs(collection(db, 'artifacts', appId, 'public', 'data', 'users'));
+              const usersList = usersSnap.docs.map(doc => ({ dbId: doc.id, ...doc.data() }));
+              const user = usersList.find(u => u.username === username && u.password === password);
+              
+              if (user) {
+                setCurrentUser(user);
+                setUsername(''); setPassword('');
+              } else {
+                setLoginError('Username atau password salah!');
+              }
+            } catch (err) {
+              console.error(err);
+              setLoginError('Gagal memverifikasi data. Pastikan koneksi internet stabil.');
+            }
+          };
+
+          const handleRegister = async (e) => {
+            e.preventDefault();
+            if (!firebaseUser) {
+               setLoginError('Tunggu hingga terhubung ke Cloud...');
+               return;
+            }
+            setLoginError('');
+            setSuccessMsg('');
+
+            if (regUsername.toLowerCase() === 'admin') {
+               setLoginError('Username "admin" tidak dapat digunakan!');
+               return;
+            }
+
+            try {
+               // Cek apakah username sudah dipakai
+               const usersSnap = await getDocs(collection(db, 'artifacts', appId, 'public', 'data', 'users'));
+               const usersList = usersSnap.docs.map(doc => doc.data());
+
+               if (usersList.some(u => u.username === regUsername)) {
+                  setLoginError('Username sudah terdaftar! Pilih username lain.');
+                  return;
+               }
+
+               // Simpan data pendaftaran
+               const newUser = {
+                  name: regName,
+                  department: regDept,
+                  username: regUsername,
+                  password: regPassword,
+                  role: 'employee',
+                  createdAt: Date.now()
+               };
+
+               await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'users'), newUser);
+               
+               setSuccessMsg('Pendaftaran berhasil! Silakan login.');
+               setIsRegistering(false);
+               setRegName(''); setRegDept(''); setRegUsername(''); setRegPassword('');
+            } catch (err) {
+               console.error(err);
+               setLoginError('Gagal mendaftar ke server.');
             }
           };
 
@@ -204,42 +267,59 @@
                 <div className="max-w-md w-full bg-white rounded-2xl shadow-xl overflow-hidden mb-4">
                   <div className="bg-blue-600 p-6 text-center relative overflow-hidden">
                     <div className="absolute top-0 right-0 -mt-4 -mr-4 w-24 h-24 bg-white opacity-10 rounded-full blur-xl"></div>
-                    <i className="fas fa-cloud text-5xl text-white mx-auto mb-3 block drop-shadow-md"></i>
-                    <h1 className="text-2xl font-bold text-white leading-tight">Absensi Cloud</h1>
+                    <i className={`fas ${isRegistering ? 'fa-user-plus' : 'fa-cloud'} text-5xl text-white mx-auto mb-3 block drop-shadow-md`}></i>
+                    <h1 className="text-2xl font-bold text-white leading-tight">{isRegistering ? 'Daftar Akun Baru' : 'Absensi Cloud'}</h1>
                     <p className="text-blue-100 mt-1 text-sm font-medium tracking-wide">Tersinkronisasi Real-time</p>
                   </div>
                   <div className="p-6 space-y-4">
-                    <h2 className="text-gray-700 font-semibold text-center mb-4">Silakan Login</h2>
+                    <h2 className="text-gray-700 font-semibold text-center mb-4">{isRegistering ? 'Lengkapi Data Diri' : 'Silakan Login'}</h2>
                     
                     {loginError && <div className="bg-red-50 text-red-600 p-3 rounded-lg text-sm text-center border border-red-200 animate-pulse">{loginError}</div>}
+                    {successMsg && <div className="bg-green-50 text-green-600 p-3 rounded-lg text-sm text-center border border-green-200">{successMsg}</div>}
 
-                    <form onSubmit={handleLogin} className="space-y-4">
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">Username</label>
-                        <input type="text" required value={username} onChange={(e) => setUsername(e.target.value)} className="w-full border-gray-300 rounded-xl shadow-sm focus:border-blue-500 focus:ring-blue-500 bg-gray-50 p-3 outline-none border transition-all" placeholder="Masukkan username..." />
-                      </div>
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">Password</label>
-                        <input type="password" required value={password} onChange={(e) => setPassword(e.target.value)} className="w-full border-gray-300 rounded-xl shadow-sm focus:border-blue-500 focus:ring-blue-500 bg-gray-50 p-3 outline-none border transition-all" placeholder="Masukkan password..." />
-                      </div>
-                      <button type="submit" className="w-full py-3 px-4 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl flex items-center justify-center transition-colors mt-2 shadow-md hover:shadow-lg">
-                        MASUK APLIKASI
-                      </button>
-                    </form>
-
-                    <div className="mt-6 pt-4 border-t border-gray-100 text-sm text-gray-500">
-                      <p className="font-semibold mb-2">Pilih Akun Demo:</p>
-                      <div className="grid grid-cols-2 gap-2 text-xs">
-                        <div onClick={()=>{setUsername('budi');setPassword('123');}} className="bg-gray-50 p-2 rounded-lg border border-gray-200 cursor-pointer hover:bg-blue-50 hover:border-blue-200 transition-colors">
-                          <span className="block font-bold text-gray-700 mb-1">Pegawai</span>
-                          user: <span className="font-mono text-blue-600">budi</span><br/>pass: <span className="font-mono text-blue-600">123</span>
+                    {isRegistering ? (
+                      <form onSubmit={handleRegister} className="space-y-4">
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-1">Nama Lengkap</label>
+                          <input type="text" required value={regName} onChange={(e) => setRegName(e.target.value)} className="w-full border-gray-300 rounded-xl shadow-sm focus:border-blue-500 focus:ring-blue-500 bg-gray-50 p-3 outline-none border transition-all" placeholder="Masukkan nama Anda..." />
                         </div>
-                        <div onClick={()=>{setUsername('admin');setPassword('admin');}} className="bg-gray-50 p-2 rounded-lg border border-gray-200 cursor-pointer hover:bg-blue-50 hover:border-blue-200 transition-colors">
-                          <span className="block font-bold text-gray-700 mb-1">Admin</span>
-                          user: <span className="font-mono text-blue-600">admin</span><br/>pass: <span className="font-mono text-blue-600">admin</span>
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-1">Departemen / Divisi</label>
+                          <input type="text" required value={regDept} onChange={(e) => setRegDept(e.target.value)} className="w-full border-gray-300 rounded-xl shadow-sm focus:border-blue-500 focus:ring-blue-500 bg-gray-50 p-3 outline-none border transition-all" placeholder="Contoh: IT, Marketing..." />
                         </div>
-                      </div>
-                    </div>
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-1">Username Baru</label>
+                          <input type="text" required value={regUsername} onChange={(e) => setRegUsername(e.target.value)} className="w-full border-gray-300 rounded-xl shadow-sm focus:border-blue-500 focus:ring-blue-500 bg-gray-50 p-3 outline-none border transition-all" placeholder="Buat username..." />
+                        </div>
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-1">Password</label>
+                          <input type="password" required value={regPassword} onChange={(e) => setRegPassword(e.target.value)} className="w-full border-gray-300 rounded-xl shadow-sm focus:border-blue-500 focus:ring-blue-500 bg-gray-50 p-3 outline-none border transition-all" placeholder="Buat password..." />
+                        </div>
+                        <button type="submit" disabled={!firebaseUser} className="w-full py-3 px-4 bg-emerald-600 hover:bg-emerald-700 disabled:bg-gray-400 text-white font-bold rounded-xl flex items-center justify-center transition-colors mt-2 shadow-md hover:shadow-lg">
+                          DAFTAR SEKARANG
+                        </button>
+                        <p className="text-center text-sm text-gray-500 mt-4 cursor-pointer hover:text-blue-600" onClick={() => { setIsRegistering(false); setLoginError(''); setSuccessMsg(''); }}>
+                          Sudah punya akun? <span className="font-bold underline">Login di sini</span>
+                        </p>
+                      </form>
+                    ) : (
+                      <form onSubmit={handleLogin} className="space-y-4">
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-1">Username</label>
+                          <input type="text" required value={username} onChange={(e) => setUsername(e.target.value)} className="w-full border-gray-300 rounded-xl shadow-sm focus:border-blue-500 focus:ring-blue-500 bg-gray-50 p-3 outline-none border transition-all" placeholder="Masukkan username..." />
+                        </div>
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-1">Password</label>
+                          <input type="password" required value={password} onChange={(e) => setPassword(e.target.value)} className="w-full border-gray-300 rounded-xl shadow-sm focus:border-blue-500 focus:ring-blue-500 bg-gray-50 p-3 outline-none border transition-all" placeholder="Masukkan password..." />
+                        </div>
+                        <button type="submit" disabled={!firebaseUser} className="w-full py-3 px-4 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 text-white font-bold rounded-xl flex items-center justify-center transition-colors mt-2 shadow-md hover:shadow-lg">
+                          MASUK APLIKASI
+                        </button>
+                        <p className="text-center text-sm text-gray-500 mt-4 cursor-pointer hover:text-blue-600" onClick={() => { setIsRegistering(true); setLoginError(''); setSuccessMsg(''); }}>
+                          Belum punya akun? <span className="font-bold underline">Daftar Karyawan Baru</span>
+                        </p>
+                      </form>
+                    )}
                   </div>
                 </div>
                 <div className={`text-xs px-4 py-2 rounded-full flex items-center font-medium ${dbStatus.includes('Terhubung') ? 'bg-green-100 text-green-700' : 'bg-yellow-100 text-yellow-700'}`}>
